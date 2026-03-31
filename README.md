@@ -1,5 +1,7 @@
 # Lumen Player 插件倉庫
 
+[📖 English Version](README_EN.md)
+
 本目錄包含 Lumen Player 的視頻源插件。每個插件為一個獨立子目錄，透過 `config.json` 定義頁面結構與 API 映射，搭配 JavaScript 腳本解析第三方網站內容。
 
 ---
@@ -117,16 +119,7 @@
 1. 插件透過 GitHub 託管，以 Raw URL 提供存取
 2. 在視頻源配置（`sources.json`）中，將 `api` 欄位設為：
    ```
-   lumen://https://raw.githubusercontent.com/lumenplayer/lumenplugin/main/<plugin-name>/config.json
+   lumen://https://raw.githubusercontent.com/alianglaile/lumenplugin/main/<plugin-name>/config.json
    ```
 3. Lumen Player 會自動下載 `config.json` 及其引用的 JS 檔案並載入執行
 
----
-
-## 📝 開發新插件
-
-1. 複製現有插件目錄作為模板（推薦以 `olevod` 為範本）
-2. 修改 `config.json` 中的頁面定義與 API 端點
-3. 在 `main.js` 中實作對應的 JavaScript 解析函數
-4. 使用 `console.log()` 進行除錯，日誌會顯示在 Lumen 的開發者控制台
-5. 詳細開發規範請參閱 `PLUGIN_DEVELOPMENT.md`

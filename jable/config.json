@@ -1,0 +1,209 @@
+{
+  "id": "lumen.jable",
+  "name": "Jable.TV",
+  "description": "Jable 免费高清",
+  "host": "https://jable.tv/",
+  "files": [
+    "main.min.js"
+  ],
+  "pages": [
+    {
+      "key": "home",
+      "javascript": "Aggregate",
+      "keys": [
+        "latest",
+        "hot",
+        "chinese-subtitle"
+      ]
+    },
+    {
+      "key": "latest",
+      "title": "最近更新",
+      "url": "https://jable.tv/latest-updates/${pageNumber}/",
+      "timeout": 20,
+      "javascript": "buildMedias"
+    },
+    {
+      "key": "hot",
+      "title": "熱門影片",
+      "tags": [
+        "本週熱門",
+        "所有時間",
+        "本月熱門",
+        "今日熱門"
+      ],
+      "url": "https://jable.tv/hot/${pageNumber}/?sort_by=${tag}",
+      "timeout": 20,
+      "javascript": "buildMedias"
+    },
+    {
+      "key": "bdsm",
+      "title": "主奴調教",
+      "tags": [
+        "最近更新",
+        "近期最佳",
+        "最多觀看",
+        "最高收藏"
+      ],
+      "url": "https://jable.tv/categories/bdsm/${pageNumber}/?sort_by=${tag}",
+      "timeout": 20,
+      "javascript": "buildMedias"
+    },
+    {
+      "key": "sex-only",
+      "title": "直接開啪",
+      "tags": [
+        "最近更新",
+        "近期最佳",
+        "最多觀看",
+        "最高收藏"
+      ],
+      "url": "https://jable.tv/categories/sex-only/${pageNumber}/?sort_by=${tag}",
+      "timeout": 20,
+      "javascript": "buildMedias"
+    },
+    {
+      "key": "chinese-subtitle",
+      "title": "中文字幕",
+      "tags": [
+        "最近更新",
+        "近期最佳",
+        "最多觀看",
+        "最高收藏"
+      ],
+      "url": "https://jable.tv/categories/chinese-subtitle/${pageNumber}/?sort_by=${tag}",
+      "timeout": 20,
+      "javascript": "buildMedias"
+    },
+    {
+      "key": "insult",
+      "title": "凌辱快感",
+      "tags": [
+        "最近更新",
+        "近期最佳",
+        "最多觀看",
+        "最高收藏"
+      ],
+      "url": "https://jable.tv/categories/insult/${pageNumber}/?sort_by=${tag}",
+      "timeout": 20,
+      "javascript": "buildMedias"
+    },
+    {
+      "key": "uniform",
+      "title": "制服誘惑",
+      "tags": [
+        "最近更新",
+        "近期最佳",
+        "最多觀看",
+        "最高收藏"
+      ],
+      "url": "https://jable.tv/categories/uniform/${pageNumber}/?sort_by=${tag}",
+      "timeout": 20,
+      "javascript": "buildMedias"
+    },
+    {
+      "key": "roleplay",
+      "title": "角色劇情",
+      "tags": [
+        "最近更新",
+        "近期最佳",
+        "最多觀看",
+        "最高收藏"
+      ],
+      "url": "https://jable.tv/categories/roleplay/${pageNumber}/?sort_by=${tag}",
+      "timeout": 20,
+      "javascript": "buildMedias"
+    },
+    {
+      "key": "private-cam",
+      "title": "盜攝偷拍",
+      "tags": [
+        "最近更新",
+        "近期最佳",
+        "最多觀看",
+        "最高收藏"
+      ],
+      "url": "https://jable.tv/categories/private-cam/${pageNumber}/?sort_by=${tag}",
+      "timeout": 20,
+      "javascript": "buildMedias"
+    },
+    {
+      "key": "uncensored",
+      "title": "無碼解放",
+      "tags": [
+        "最近更新",
+        "近期最佳",
+        "最多觀看",
+        "最高收藏"
+      ],
+      "url": "https://jable.tv/categories/uncensored/${pageNumber}/?sort_by=${tag}",
+      "timeout": 20,
+      "javascript": "buildMedias"
+    },
+    {
+      "key": "pov",
+      "title": "男友視角",
+      "tags": [
+        "最近更新",
+        "近期最佳",
+        "最多觀看",
+        "最高收藏"
+      ],
+      "url": "https://jable.tv/categories/pov/${pageNumber}/?sort_by=${tag}",
+      "timeout": 20,
+      "javascript": "buildMedias"
+    },
+    {
+      "key": "groupsex",
+      "title": "多P群交",
+      "tags": [
+        "最近更新",
+        "近期最佳",
+        "最多觀看",
+        "最高收藏"
+      ],
+      "url": "https://jable.tv/categories/groupsex/${pageNumber}/?sort_by=${tag}",
+      "timeout": 20,
+      "javascript": "buildMedias"
+    },
+    {
+      "key": "pantyhose",
+      "title": "絲襪美腿",
+      "tags": [
+        "最近更新",
+        "近期最佳",
+        "最多觀看",
+        "最高收藏"
+      ],
+      "url": "https://jable.tv/categories/pantyhose/${pageNumber}/?sort_by=${tag}",
+      "timeout": 20,
+      "javascript": "buildMedias"
+    },
+    {
+      "key": "lesbian",
+      "title": "女同歡愉",
+      "tags": [
+        "最近更新",
+        "近期最佳",
+        "最多觀看",
+        "最高收藏"
+      ],
+      "url": "https://jable.tv/categories/lesbian/${pageNumber}/?sort_by=${tag}",
+      "timeout": 20,
+      "javascript": "buildMedias"
+    }
+  ],
+  "episodes": {
+    "timeout": 20,
+    "javascript": "Episodes"
+  },
+  "player": {
+    "timeout": 20,
+    "javascript": "Player"
+  },
+  "search": {
+    "timeout": 20,
+    "url": "https://jable.tv/search/${keyword}/${pageNumber}/",
+    "javascript": "Search"
+  }
+}

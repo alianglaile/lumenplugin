@@ -1,0 +1,183 @@
+{
+  "id": "lumen.douban",
+  "name": "豆瓣精选",
+  "description": "豆瓣主题插件",
+  "host": "https://movie.douban.com/",
+  "files": [
+    "main.min.js"
+  ],
+  "heroBanner": {
+    "timeout": 20,
+    "javascript": "HeroBanner"
+  },
+  "pages": [
+    {
+      "key": "home",
+      "title": "主页",
+      "keys": [
+        "movie-hot",
+        "tv-hot",
+        "show-hot"
+      ],
+      "timeout": 20,
+      "javascript": "Aggregate"
+    },
+    {
+      "key": "movie-hot",
+      "title": "热门电影",
+      "tags": [
+        "全部",
+        "华语",
+        "欧美",
+        "韩国",
+        "日本"
+      ],
+      "url": "https://m.douban.com/rexxar/api/v2/subject/recent_hot/movie?pageNumber=${pageNumber}&category=热门&type=${tag}",
+      "timeout": 20,
+      "javascript": "Category"
+    },
+    {
+      "key": "tv-hot",
+      "title": "热门剧集",
+      "tags": [
+        "综合",
+        "国产剧",
+        "欧美剧",
+        "日剧",
+        "韩剧",
+        "动画",
+        "纪录片"
+      ],
+      "url": "https://m.douban.com/rexxar/api/v2/subject/recent_hot/tv?pageNumber=${pageNumber}&category=tv&type=${tag}",
+      "timeout": 20,
+      "javascript": "Category"
+    },
+    {
+      "key": "show-hot",
+      "title": "热门综艺",
+      "tags": [
+        "综合",
+        "国内",
+        "国外"
+      ],
+      "url": "https://m.douban.com/rexxar/api/v2/subject/recent_hot/tv?pageNumber=${pageNumber}&category=show&type=${tag}",
+      "timeout": 20,
+      "javascript": "Category"
+    },
+    {
+      "key": "movie-latest",
+      "title": "最新电影",
+      "tags": [
+        "全部",
+        "华语",
+        "欧美",
+        "韩国",
+        "日本"
+      ],
+      "url": "https://m.douban.com/rexxar/api/v2/subject/recent_hot/movie?pageNumber=${pageNumber}&category=最新&type=${tag}",
+      "timeout": 20,
+      "javascript": "Category"
+    },
+    {
+      "key": "movie-high-score",
+      "title": "豆瓣高分",
+      "tags": [
+        "全部",
+        "华语",
+        "欧美",
+        "韩国",
+        "日本"
+      ],
+      "url": "https://m.douban.com/rexxar/api/v2/subject/recent_hot/movie?pageNumber=${pageNumber}&category=豆瓣高分&type=${tag}",
+      "timeout": 20,
+      "javascript": "Category"
+    },
+    {
+      "key": "movie-hidden-gem",
+      "title": "冷门佳片",
+      "tags": [
+        "全部",
+        "华语",
+        "欧美",
+        "韩国",
+        "日本"
+      ],
+      "url": "https://m.douban.com/rexxar/api/v2/subject/recent_hot/movie?pageNumber=${pageNumber}&category=冷门佳片&type=${tag}",
+      "timeout": 20,
+      "javascript": "Category"
+    },
+    {
+      "key": "chart-new-movie",
+      "title": "豆瓣新片榜",
+      "url": "https://movie.douban.com/chart?doubanSection=new_movie&pageNumber=${pageNumber}",
+      "timeout": 20,
+      "javascript": "Category"
+    },
+    {
+      "key": "chart-weekly-reputation",
+      "title": "一周口碑榜",
+      "url": "https://movie.douban.com/chart?doubanSection=weekly_reputation&pageNumber=${pageNumber}",
+      "timeout": 20,
+      "javascript": "Category"
+    },
+    {
+      "key": "chart-north-america-box",
+      "title": "北美票房榜",
+      "url": "https://movie.douban.com/chart?doubanSection=north_america_box&pageNumber=${pageNumber}",
+      "timeout": 20,
+      "javascript": "Category"
+    },
+    {
+      "key": "chart-top250",
+      "title": "豆瓣Top250",
+      "url": "https://movie.douban.com/top250?pageNumber=${pageNumber}",
+      "timeout": 20,
+      "javascript": "Category"
+    },
+    {
+      "key": "annual-2025",
+      "title": "2025年度榜单",
+      "url": "https://movie.douban.com/annual/2025/?fullscreen=1&doubanMode=annual&year=2025&pageNumber=${pageNumber}",
+      "timeout": 20,
+      "javascript": "Category"
+    },
+    {
+      "key": "annual-2024",
+      "title": "2024年度榜单",
+      "url": "https://movie.douban.com/annual/2024/?fullscreen=1&doubanMode=annual&year=2024&pageNumber=${pageNumber}",
+      "timeout": 20,
+      "javascript": "Category"
+    },
+    {
+      "key": "annual-2023",
+      "title": "2023年度榜单",
+      "url": "https://movie.douban.com/annual/2023/?fullscreen=1&doubanMode=annual&year=2023&pageNumber=${pageNumber}",
+      "timeout": 20,
+      "javascript": "Category"
+    },
+    {
+      "key": "annual-2022",
+      "title": "2022年度榜单",
+      "url": "https://movie.douban.com/annual/2022/?fullscreen=1&doubanMode=annual&year=2022&pageNumber=${pageNumber}",
+      "timeout": 20,
+      "javascript": "Category"
+    },
+    {
+      "key": "annual-2021",
+      "title": "2021年度榜单",
+      "url": "https://movie.douban.com/annual/2021/?fullscreen=1&doubanMode=annual&year=2021&pageNumber=${pageNumber}",
+      "timeout": 20,
+      "javascript": "Category"
+    }
+  ],
+  "episodes": {
+    "timeout": 20,
+    "javascript": "Episodes"
+  },
+  "detail": {
+    "timeout": 25,
+    "javascript": "Detail"
+  },
+  "player": {},
+  "search": {}
+}

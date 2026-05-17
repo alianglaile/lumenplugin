@@ -1,0 +1,40 @@
+{
+  "id": "cloudsaver",
+  "name": "CloudSaver 网盘聚合",
+  "description": "聚合 Telegram 频道资源链接，自动转存到夸克/115网盘并直接播放。",
+  "host": "https://t.me",
+  "files": [
+    "cloudPatterns.js",
+    "tgParser.js",
+    "main.js"
+  ],
+  "pages": [
+    {
+      "key": "mycloud-quark",
+      "title": "我的夸克",
+      "url": "cloudsaver://mycloud?type=quark",
+      "timeout": 20,
+      "javascript": "MyCloud"
+    },
+    {
+      "key": "mycloud-cloud115",
+      "title": "我的115",
+      "url": "cloudsaver://mycloud?type=cloud115",
+      "timeout": 20,
+      "javascript": "MyCloud"
+    }
+  ],
+  "search": {
+    "url": "cloudsaver://search?keyword=${keyword}",
+    "timeout": 30,
+    "javascript": "Search"
+  },
+  "episodes": {
+    "timeout": 20,
+    "javascript": "Episodes"
+  },
+  "player": {
+    "timeout": 30,
+    "javascript": "Player"
+  }
+}

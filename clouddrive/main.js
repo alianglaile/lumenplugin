@@ -7,7 +7,7 @@
 // - 不要在 if/for 块里 function 声明
 // - 永不传 undefined/null 给 $next 方法
 
-var DEBUG = false;
+var DEBUG = true;
 function _log(label, params) {
   if (!DEBUG) return;
   try { console.log("[clouddrive:" + label + "] " + JSON.stringify(params || {})); } catch (e) {}
@@ -218,9 +218,11 @@ function Player(inputURL, _key) {
   _log("Player.start", { inputURL: inputURL });
   var info = _parsePlayURL(inputURL);
   if (!info) {
+    _log("Player.invalidParam", { inputURL: inputURL });
     $next.emptyView("无效的播放参数");
     return;
   }
+  _log("Player.parsed", info);
   $cloud.playOrSave({
     cloudType: info.type,
     shareUrl: info.url,

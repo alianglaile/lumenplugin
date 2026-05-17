@@ -169,6 +169,7 @@ function Episodes(inputURL, _key) {
                     "&shareUrl=" + encodeURIComponent(info.url) +
                     "&passcode=" + encodeURIComponent(info.passcode || "") +
                     "&shareFileId=" + encodeURIComponent(f.fileId) +
+                    "&shareFidToken=" + encodeURIComponent(f.shareFidToken || "") +
                     "&title=" + encodeURIComponent(perEpisodeTitle);
       eps.push({
         id: f.fileId,
@@ -228,7 +229,8 @@ function Player(inputURL, _key) {
     shareUrl: info.url,
     passcode: info.passcode || "",
     title: info.title || "",
-    shareFileId: info.shareFileId || ""
+    shareFileId: info.shareFileId || "",
+    shareFidToken: info.shareFidToken || ""
   }).then(function (play) {
     if (!play || !play.url) {
       $next.emptyView("未能解析出播放地址");
@@ -251,11 +253,12 @@ function Player(inputURL, _key) {
 function _parsePlayURL(url) {
   if (!url || url.indexOf("clouddrive://play") !== 0) return null;
   return {
-    type:        _qs(url, "type"),
-    url:         _qs(url, "shareUrl"),
-    passcode:    _qs(url, "passcode"),
-    title:       _qs(url, "title"),
-    shareFileId: _qs(url, "shareFileId")
+    type:          _qs(url, "type"),
+    url:           _qs(url, "shareUrl"),
+    passcode:      _qs(url, "passcode"),
+    title:         _qs(url, "title"),
+    shareFileId:   _qs(url, "shareFileId"),
+    shareFidToken: _qs(url, "shareFidToken")
   };
 }
 

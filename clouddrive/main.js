@@ -40,8 +40,7 @@ function Search(inputURL, key) {
       done++;
       if (done < total) return;
       var dedup = _dedupeByCloudURL(collected);
-      _log("Search.emit", { count: dedup.length });
-      $next.toSearchMedias(JSON.stringify(dedup), String(key || ""));
+      _validateAndEmit(dedup, key);
     };
 
     for (var i = 0; i < channels.length; i++) {
@@ -135,6 +134,61 @@ function _dedupeByCloudURL(items) {
     out.push(it);
   }
   return out;
+}
+
+function _extractShareReq(media) {
+  // Parses {type, url, passcode} back out of detailURLString = "clouddrive://share?type=...&url=...&passcode=..."
+  var d = media && media.detailURLString;
+  if (!d || d.indexOf("clouddrive://share") !== 0) return null;
+  var t = _qs(d, "type");
+  var u = _qs(d, "url");
+  if (!t || !u) return null;
+  return { cloudType: t, shareUrl: u, passcode: _qs(d, "passcode") };
+}
+
+function _validateAndEmit(medias, key) {
+  if (!medias || medias.length === 0) {
+    _log("Search.emit", { count: 0 });
+    $next.toSearchMedias("[]", String(key || ""));
+    return;
+  }
+  // Build dedup'd validation requests
+  var seen = {};
+  var reqs = [];
+  for (var i = 0; i < medias.length; i++) {
+    var r = _extractShareReq(medias[i]);
+    if (!r || seen[r.shareUrl]) continue;
+    seen[r.shareUrl] = true;
+    reqs.push(r);
+  }
+  if (reqs.length === 0) {
+    _log("Search.emit", { count: medias.length, validated: 0 });
+    $next.toSearchMedias(JSON.stringify(medias), String(key || ""));
+    return;
+  }
+  _log("Search.validate.begin", { unique: reqs.length, totalCards: medias.length });
+  $cloud.validateShares(reqs).then(function (results) {
+    var invalidSet = {};
+    var invalidCount = 0;
+    for (var j = 0; j < results.length; j++) {
+      if (results[j].isValid === false) {
+        invalidSet[results[j].shareUrl] = true;
+        invalidCount++;
+      }
+    }
+    var kept = [];
+    for (var k = 0; k < medias.length; k++) {
+      var r2 = _extractShareReq(medias[k]);
+      if (r2 && invalidSet[r2.shareUrl]) continue;
+      kept.push(medias[k]);
+    }
+    _log("Search.emit", { count: kept.length, dropped: medias.length - kept.length, invalidShares: invalidCount });
+    $next.toSearchMedias(JSON.stringify(kept), String(key || ""));
+  }, function (err) {
+    // Validation failed entirely — fall back to emitting unvalidated (don't punish the user).
+    _log("Search.validate.error", { err: err, fallbackCount: medias.length });
+    $next.toSearchMedias(JSON.stringify(medias), String(key || ""));
+  });
 }
 
 // ============================================================

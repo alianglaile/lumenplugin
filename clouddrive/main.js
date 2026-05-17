@@ -1,4 +1,4 @@
-// CloudSaver 网盘聚合插件
+// CloudDrive 网盘聚合插件
 // 流程：搜 TG 公开频道 -> 正则识别网盘链接 -> 用户点击 -> 原生层转存+解析直链 -> 播放
 //
 // 关键约束（来自 SKILL.md）：
@@ -10,7 +10,7 @@
 var DEBUG = false;
 function _log(label, params) {
   if (!DEBUG) return;
-  try { console.log("[cloudsaver:" + label + "] " + JSON.stringify(params || {})); } catch (e) {}
+  try { console.log("[clouddrive:" + label + "] " + JSON.stringify(params || {})); } catch (e) {}
 }
 
 var SINGLE_CHANNEL_TIMEOUT_SEC = 10;
@@ -102,7 +102,7 @@ function _messagesToMedias(messages, channel) {
 function _buildMedia(msg, link, passcode, channel) {
   var title = msg.title || ("分享 " + msg.messageId);
   var desc = (msg.pubDate || "") + " · " + link.type + (channel ? (" · " + (channel.displayName || channel.channelId)) : "");
-  var detail = "cloudsaver://share?type=" + encodeURIComponent(link.type) +
+  var detail = "clouddrive://share?type=" + encodeURIComponent(link.type) +
                "&url=" + encodeURIComponent(link.url) +
                "&passcode=" + encodeURIComponent(passcode || "") +
                "&title=" + encodeURIComponent(title);
@@ -138,8 +138,8 @@ function _dedupeByCloudURL(items) {
 }
 
 // ============================================================
-// Episodes: 把 cloudsaver://share URL 转成单集（首版只暴露单一"播放"项）
-// 真实分享内多文件的展开放到 v0.2（需要扩展 $cloud.listShareFiles）
+// Episodes: 调 $cloud.listShareFiles 递归列分享内所有视频文件，每个文件成为一集
+// 单文件分享时退化为只有一项的列表
 // ============================================================
 function Episodes(inputURL, _key) {
   _log("Episodes.start", { inputURL: inputURL });
@@ -148,21 +148,54 @@ function Episodes(inputURL, _key) {
     $next.emptyView("无效的分享链接参数");
     return;
   }
-  var playURL = "cloudsaver://play?type=" + encodeURIComponent(info.type) +
-                "&shareUrl=" + encodeURIComponent(info.url) +
-                "&passcode=" + encodeURIComponent(info.passcode || "") +
-                "&title=" + encodeURIComponent(info.title || "");
-  $next.toEpisodes(JSON.stringify([
-    {
-      id: "play",
-      title: info.title || "播放",
-      episodeDetailURL: playURL
+  $cloud.listShareFiles({
+    cloudType: info.type,
+    shareUrl: info.url,
+    passcode: info.passcode || ""
+  }).then(function (files) {
+    if (!files || files.length === 0) {
+      $next.emptyView("分享内未找到可播放的视频文件");
+      return;
     }
-  ]));
+    var sorted = files.slice().sort(function (a, b) {
+      return String(a.path || a.name).localeCompare(String(b.path || b.name));
+    });
+    var eps = [];
+    for (var i = 0; i < sorted.length; i++) {
+      var f = sorted[i];
+      var displayTitle = _prettyEpisodeTitle(f.name, i + 1);
+      var perEpisodeTitle = (info.title || "") + " · " + displayTitle;
+      var playURL = "clouddrive://play?type=" + encodeURIComponent(info.type) +
+                    "&shareUrl=" + encodeURIComponent(info.url) +
+                    "&passcode=" + encodeURIComponent(info.passcode || "") +
+                    "&shareFileId=" + encodeURIComponent(f.fileId) +
+                    "&title=" + encodeURIComponent(perEpisodeTitle);
+      eps.push({
+        id: f.fileId,
+        title: displayTitle,
+        episodeDetailURL: playURL
+      });
+    }
+    _log("Episodes.emit", { count: eps.length });
+    $next.toEpisodes(JSON.stringify(eps));
+  }, function (err) {
+    _log("Episodes.error", { err: err });
+    $next.emptyView("无法读取分享内容: " + err);
+  });
+}
+
+function _prettyEpisodeTitle(name, fallbackIndex) {
+  if (!name) return "第 " + fallbackIndex + " 集";
+  var trimmed = String(name).replace(/\.[A-Za-z0-9]{2,5}$/, "");
+  var m = trimmed.match(/S(\d{1,2})E(\d{1,3})/i);
+  if (m) return "S" + m[1].padStart(2, "0") + "E" + m[2].padStart(2, "0");
+  var n = trimmed.match(/(\d{1,3})/);
+  if (n) return "第 " + parseInt(n[1], 10) + " 集";
+  return trimmed;
 }
 
 function _parseShareURL(url) {
-  if (!url || url.indexOf("cloudsaver://share") !== 0) return null;
+  if (!url || url.indexOf("clouddrive://share") !== 0) return null;
   return {
     type:     _qs(url, "type"),
     url:      _qs(url, "url"),
@@ -192,7 +225,8 @@ function Player(inputURL, _key) {
     cloudType: info.type,
     shareUrl: info.url,
     passcode: info.passcode || "",
-    title: info.title || ""
+    title: info.title || "",
+    shareFileId: info.shareFileId || ""
   }).then(function (play) {
     if (!play || !play.url) {
       $next.emptyView("未能解析出播放地址");
@@ -213,12 +247,13 @@ function Player(inputURL, _key) {
 }
 
 function _parsePlayURL(url) {
-  if (!url || url.indexOf("cloudsaver://play") !== 0) return null;
+  if (!url || url.indexOf("clouddrive://play") !== 0) return null;
   return {
-    type:     _qs(url, "type"),
-    url:      _qs(url, "shareUrl"),
-    passcode: _qs(url, "passcode"),
-    title:    _qs(url, "title")
+    type:        _qs(url, "type"),
+    url:         _qs(url, "shareUrl"),
+    passcode:    _qs(url, "passcode"),
+    title:       _qs(url, "title"),
+    shareFileId: _qs(url, "shareFileId")
   };
 }
 
@@ -236,7 +271,7 @@ function MyCloud(inputURL, key) {
     var medias = [];
     for (var i = 0; i < files.length; i++) {
       var f = files[i];
-      var playURL = "cloudsaver://playFile?type=" + encodeURIComponent(f.cloudType) +
+      var playURL = "clouddrive://playFile?type=" + encodeURIComponent(f.cloudType) +
                     "&fileId=" + encodeURIComponent(f.cloudFileId) +
                     "&title=" + encodeURIComponent(f.title || "");
       medias.push({

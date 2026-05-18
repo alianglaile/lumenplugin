@@ -124,22 +124,40 @@ function _extractKeyword(inputURL) {
   try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; }
 }
 
+function _normalizeChannelId(raw) {
+  var id = String(raw || "").trim();
+  // Strip @ prefix (e.g. @channelname → channelname)
+  if (id.charAt(0) === "@") id = id.substring(1);
+  // Strip full t.me URL (https://t.me/channelname or https://t.me/s/channelname)
+  var m = id.match(/t\.me\/(?:s\/)?([A-Za-z0-9_]+)/);
+  if (m) id = m[1];
+  return id;
+}
+
 function _fetchChannel(channel, keyword, onComplete) {
-  var url = "https://t.me/s/" + encodeURIComponent(channel.channelId) +
+  var channelId = _normalizeChannelId(channel.channelId);
+  if (!channelId) { onComplete([]); return; }
+  var url = "https://t.me/s/" + encodeURIComponent(channelId) +
             "?q=" + encodeURIComponent(keyword);
   $http.fetch({
     url: url,
     method: "GET",
     timeout: SINGLE_CHANNEL_TIMEOUT_SEC,
     headers: {
-      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Lumen/1.0",
-      "Accept": "text/html,application/xhtml+xml"
+      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"
     }
   }).then(function (res) {
+    if (res.statusCode && res.statusCode >= 400) {
+      _log("Search.channelHTTPError", { channel: channelId, status: res.statusCode });
+      onComplete([]);
+      return;
+    }
     var medias = _messagesToMedias(parseTGPage(res.body || ""), channel);
     onComplete(medias);
   }, function (err) {
-    _log("Search.channelError", { channel: channel.channelId, err: err });
+    _log("Search.channelError", { channel: channelId, err: err });
     onComplete([]);
   });
 }

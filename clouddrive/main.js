@@ -104,7 +104,7 @@ function Search(inputURL, key) {
       done++;
       if (done < total) return;
       var dedup = _dedupeByCloudURL(collected);
-      _validateAndEmit(dedup, key);
+      _validateAndEmit(dedup, key, keyword);
     };
 
     for (var i = 0; i < channels.length; i++) {
@@ -148,6 +148,8 @@ function _messagesToMedias(messages, channel) {
   var out = [];
   for (var i = 0; i < messages.length; i++) {
     var msg = messages[i];
+    // 噪声预过滤：无发布时间 + 无标签的消息通常是置顶公告 / 频道介绍 / 广告
+    if (!msg.pubDate && (!msg.tags || msg.tags.length === 0)) continue;
     var links = extractCloudLinks(msg.text);
     if (links.length === 0) continue;
     var passcode = extractPasscode(msg.text) || "";
@@ -166,13 +168,17 @@ function _buildMedia(msg, link, passcode, channel) {
                "&url=" + encodeURIComponent(link.url) +
                "&passcode=" + encodeURIComponent(passcode || "") +
                "&title=" + encodeURIComponent(title);
-  return {
+  var media = {
     id: link.type + ":" + msg.messageId + ":" + _hashStr(link.url),
     title: title,
     coverURLString: msg.image || "",
     descriptionText: desc,
     detailURLString: detail
   };
+  // 非标准字段，仅 JS 内部排序使用，Lumen MediaData 解码会忽略未知字段
+  media._pubDate = msg.pubDate || "";
+  media._shareUrl = link.url;
+  return media;
 }
 
 function _hashStr(s) {
@@ -207,12 +213,13 @@ function _extractShareReq(media) {
   return { cloudType: t, shareUrl: u, passcode: _qs(d, "passcode") };
 }
 
-function _validateAndEmit(medias, key) {
+function _validateAndEmit(medias, key, keyword) {
   if (!medias || medias.length === 0) {
     _log("Search.emit", { count: 0 });
     $next.toSearchMedias("[]", String(key || ""));
     return;
   }
+  var kw = String(keyword || "").toLowerCase();
   // Build dedup'd validation requests
   var seen = {};
   var reqs = [];
@@ -223,33 +230,118 @@ function _validateAndEmit(medias, key) {
     reqs.push(r);
   }
   if (reqs.length === 0) {
-    _log("Search.emit", { count: medias.length, validated: 0 });
-    $next.toSearchMedias(JSON.stringify(medias), String(key || ""));
+    var rankedRaw = _rankMedias(medias, kw);
+    _log("Search.emit", { count: rankedRaw.length, validated: 0 });
+    $next.toSearchMedias(JSON.stringify(rankedRaw), String(key || ""));
     return;
   }
   _log("Search.validate.begin", { unique: reqs.length, totalCards: medias.length });
   $cloud.validateShares(reqs).then(function (results) {
-    var invalidSet = {};
-    var invalidCount = 0;
+    // state: ok / bad / locked / uncertain
+    var stateByUrl = {};
+    var badCount = 0, lockedCount = 0;
     for (var j = 0; j < results.length; j++) {
-      if (results[j].isValid === false) {
-        invalidSet[results[j].shareUrl] = true;
-        invalidCount++;
-      }
+      var r = results[j];
+      var st = r.state || (r.isValid === false ? "bad" : "ok");
+      stateByUrl[r.shareUrl] = st;
+      if (st === "bad") badCount++;
+      else if (st === "locked") lockedCount++;
     }
     var kept = [];
     for (var k = 0; k < medias.length; k++) {
-      var r2 = _extractShareReq(medias[k]);
-      if (r2 && invalidSet[r2.shareUrl]) continue;
-      kept.push(medias[k]);
+      var req2 = _extractShareReq(medias[k]);
+      if (!req2) { kept.push(medias[k]); continue; }
+      var s = stateByUrl[req2.shareUrl];
+      if (s === "bad") continue;                 // 明确失效 → 丢
+      if (s === "locked") {                      // 需提取码 → 保留，加锁标记
+        var m = medias[k];
+        if (m.title.indexOf("🔒") !== 0) m.title = "🔒 " + m.title;
+        m.descriptionText = (m.descriptionText || "") + " · 需提取码";
+        kept.push(m);
+      } else {
+        kept.push(medias[k]);                   // ok / uncertain / unknown → 保留
+      }
     }
-    _log("Search.emit", { count: kept.length, dropped: medias.length - kept.length, invalidShares: invalidCount });
-    $next.toSearchMedias(JSON.stringify(kept), String(key || ""));
+    var ranked = _rankMedias(kept, kw);
+    _log("Search.emit", {
+      count: ranked.length,
+      droppedBad: badCount,
+      keptLocked: lockedCount,
+      totalIn: medias.length
+    });
+    $next.toSearchMedias(JSON.stringify(ranked), String(key || ""));
   }, function (err) {
     // Validation failed entirely — fall back to emitting unvalidated (don't punish the user).
     _log("Search.validate.error", { err: err, fallbackCount: medias.length });
     $next.toSearchMedias(JSON.stringify(medias), String(key || ""));
   });
+}
+
+// ============================================================
+// Ranking: time + keyword-in-title + (channel weight reserved)
+// 借鉴 fish2018/pansou 的三维加权
+// ============================================================
+function _rankMedias(medias, keywordLower) {
+  if (!medias || medias.length === 0) return medias;
+  var nowSec = Math.floor(Date.now() / 1000);
+  var kw = String(keywordLower || "").toLowerCase().trim();
+  // 装饰 → 排序 → 还原
+  var decorated = [];
+  for (var i = 0; i < medias.length; i++) {
+    decorated.push({ media: medias[i], score: _scoreMedia(medias[i], kw, nowSec), originalIdx: i });
+  }
+  decorated.sort(function (a, b) {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.originalIdx - b.originalIdx;
+  });
+  var out = [];
+  for (var j = 0; j < decorated.length; j++) out.push(decorated[j].media);
+  return out;
+}
+
+function _scoreMedia(media, keywordLower, nowSec) {
+  var score = 0;
+  var title = String(media.title || "").toLowerCase();
+
+  // 关键词分（前部匹配 / 出现次数）
+  if (keywordLower.length > 0) {
+    var idx = title.indexOf(keywordLower);
+    if (idx >= 0) {
+      score += 10;
+      if (idx <= 5) score += 5;              // 标题前部命中
+    }
+    // 命中次数（粗略）
+    var rest = title;
+    var hits = 0;
+    while (rest.length > 0) {
+      var p = rest.indexOf(keywordLower);
+      if (p < 0) break;
+      hits++;
+      rest = rest.substring(p + keywordLower.length);
+    }
+    if (hits > 1) score += Math.min(hits - 1, 3) * 2;
+  }
+
+  // 时间分（最近 7 天内每天 -2 分；超过 7 天衰减为常数 0）
+  var pubSec = _parseISODateSec(media._pubDate || "");
+  if (pubSec > 0) {
+    var ageDays = (nowSec - pubSec) / 86400;
+    if (ageDays < 0) ageDays = 0;
+    score += Math.max(0, 14 - ageDays * 2);
+  }
+
+  // 锁定卡片轻微降权（用户更想要无密的）
+  if (String(media.title || "").indexOf("🔒") === 0) score -= 4;
+
+  return score;
+}
+
+function _parseISODateSec(s) {
+  if (!s) return 0;
+  var d = new Date(s);
+  var t = d.getTime();
+  if (isNaN(t)) return 0;
+  return Math.floor(t / 1000);
 }
 
 // ============================================================

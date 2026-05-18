@@ -18,12 +18,76 @@ var SINGLE_CHANNEL_TIMEOUT_SEC = 10;
 // ============================================================
 // Search: 跨多个 TG 频道并发抓取，匹配网盘链接，归一化为 MediaData
 // ============================================================
+var _channelsCache = null;     // 默认频道列表（来自 channels.json）
+var _channelsCacheTime = 0;
+
+function _loadDefaultChannels(cb) {
+  // 24h 命中插件自身缓存：避免每次搜索都拉一次远端 channels.json
+  var now = Date.now();
+  if (_channelsCache && (now - _channelsCacheTime) < 86400000) {
+    cb(_channelsCache);
+    return;
+  }
+  var base = ($plugin && $plugin.baseURL) ? $plugin.baseURL : "";
+  if (!base) {
+    cb([]);
+    return;
+  }
+  $http.fetch({ url: base + "channels.json", timeout: 10 }).then(function (res) {
+    try {
+      var list = JSON.parse(res.body || "[]");
+      if (Object.prototype.toString.call(list) !== "[object Array]") list = [];
+      _channelsCache = list;
+      _channelsCacheTime = now;
+      cb(list);
+    } catch (e) {
+      _log("Search.defaultsParseFail", { err: String(e) });
+      cb(_channelsCache || []);
+    }
+  }, function (err) {
+    _log("Search.defaultsFetchFail", { err: err });
+    cb(_channelsCache || []);
+  });
+}
+
+function _resolveEffectiveChannels(callback) {
+  // 默认列表 + 用户覆盖：禁用 ID 过滤掉、追加自定义频道
+  _loadDefaultChannels(function (defaults) {
+    $cloud.getChannelOverrides().then(function (ov) {
+      var disabled = {};
+      var disabledIds = (ov && ov.disabledDefaultIds) || [];
+      for (var i = 0; i < disabledIds.length; i++) disabled[disabledIds[i]] = true;
+      var effective = [];
+      for (var j = 0; j < defaults.length; j++) {
+        var d = defaults[j];
+        if (disabled[d.id]) continue;
+        effective.push({ source: "telegram", channelId: d.id, displayName: d.name || d.id });
+      }
+      var customs = (ov && ov.customChannels) || [];
+      for (var k = 0; k < customs.length; k++) {
+        var c = customs[k];
+        // 防止 custom 与 default 重名
+        if (disabled[c.channelId]) continue;
+        effective.push(c);
+      }
+      callback(effective);
+    }, function () {
+      // 覆盖读不到时直接用全量默认
+      var fallback = [];
+      for (var m = 0; m < defaults.length; m++) {
+        fallback.push({ source: "telegram", channelId: defaults[m].id, displayName: defaults[m].name || defaults[m].id });
+      }
+      callback(fallback);
+    });
+  });
+}
+
 function Search(inputURL, key) {
   _log("Search.start", { inputURL: inputURL, key: key });
 
-  $cloud.getSearchChannels().then(function (channels) {
+  _resolveEffectiveChannels(function (channels) {
     if (!channels || channels.length === 0) {
-      $next.emptyView("请先在 设置 → 网盘 → 搜索频道 添加 TG 频道");
+      $next.emptyView("没有可用搜索频道（默认列表为空，且没有自定义频道）");
       return;
     }
     var keyword = _extractKeyword(inputURL);
@@ -50,9 +114,6 @@ function Search(inputURL, key) {
         tryEmit();
       });
     }
-  }, function (err) {
-    _log("Search.bridgeError", { err: err });
-    $next.emptyView("无法读取频道配置: " + err);
   });
 }
 

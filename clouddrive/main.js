@@ -430,11 +430,15 @@ function Player(inputURL, _key) {
     $next.emptyView("无效的播放参数");
     return;
   }
-  _log("Player.parsed", info);
+  // 二次进入：host 在用户填了提取码后会注入 $userInput；优先用它覆盖原 passcode。
+  var effectivePasscode = (typeof $userInput !== "undefined" && $userInput && $userInput.passcode)
+    ? String($userInput.passcode)
+    : (info.passcode || "");
+  _log("Player.parsed", { type: info.type, shareFileId: info.shareFileId, hasUserInput: typeof $userInput !== "undefined" && !!$userInput });
   $cloud.playOrSave({
     cloudType: info.type,
     shareUrl: info.url,
-    passcode: info.passcode || "",
+    passcode: effectivePasscode,
     title: info.title || "",
     shareFileId: info.shareFileId || "",
     shareFidToken: info.shareFidToken || ""
@@ -452,8 +456,28 @@ function Player(inputURL, _key) {
     _log("Player.resolved", { url: payload.url });
     $next.toPlayerByJSON(JSON.stringify(payload));
   }, function (err) {
-    _log("Player.error", { err: err });
-    $next.emptyView("播放失败: " + err);
+    var msg = String(err || "");
+    _log("Player.error", { err: msg });
+    // 检测 locked / 提取码错误 → 请求用户输入；host 会重新调 Player，$userInput 带值
+    var alreadyTried = typeof $userInput !== "undefined" && $userInput && $userInput.passcode;
+    var looksLocked = msg.indexOf("提取码") >= 0 || msg.indexOf("密码") >= 0 ||
+                      msg.indexOf("41010") >= 0 || msg.indexOf("41008") >= 0;
+    if (looksLocked && !alreadyTried) {
+      $next.requestUserInput({
+        title: "此分享需要提取码",
+        message: msg,
+        fields: [
+          { key: "passcode", label: "提取码", placeholder: "通常 4 位", kind: "text", required: true }
+        ],
+        confirmLabel: "解锁播放"
+      });
+      return;
+    }
+    if (looksLocked && alreadyTried) {
+      $next.emptyView("提取码错误，请重试");
+      return;
+    }
+    $next.emptyView("播放失败: " + msg);
   });
 }
 

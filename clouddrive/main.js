@@ -110,11 +110,25 @@ var BUILT_IN_CHANNELS = [
   {"name":"Oscar_4Kmovies","id":"Oscar_4Kmovies"}
 ];
 
+// Per-cloud-type optimized channel lists — populated only after eval_quark_channels.js
+// (or equivalent) has been run and a Top-3 ranking confirmed.
+// Other cloud types will be added here once their evaluation scripts are run.
+var BUILT_IN_BY_TYPE = {
+  "quark": [
+    {"name":"leoziyuan","id":"leoziyuan"},
+    {"name":"Quark_Movies","id":"Quark_Movies"},
+    {"name":"baicaoZY","id":"baicaoZY"}
+  ]
+};
+
 // ============================================================
 // Search: 跨多个 TG 频道并发抓取，匹配网盘链接，归一化为 MediaData
 // ============================================================
-var _channelsCache = null;     // 默认频道列表（来自 channels.json）
+var _channelsCache = null;     // 全量频道列表缓存（channels.json）
 var _channelsCacheTime = 0;
+var _typeChannelsCache = null;     // 按云盘类型筛选的优选频道缓存
+var _typeChannelsCacheKey = "";
+var _typeChannelsCacheTime = 0;
 
 function _loadDefaultChannels(cb) {
   // 24h 命中插件自身缓存：避免每次搜索都拉一次远端 channels.json
@@ -166,43 +180,156 @@ function _loadDefaultChannels(cb) {
   });
 }
 
-function _resolveEffectiveChannels(callback) {
-  // 默认列表 + 用户覆盖：禁用 ID 过滤掉、追加自定义频道
-  _loadDefaultChannels(function (defaults) {
-    _log("Search.resolve.defaults", { count: defaults.length });
-    $cloud.getChannelOverrides().then(function (ov) {
-      var disabled = {};
-      var disabledIds = (ov && ov.disabledDefaultIds) || [];
-      for (var i = 0; i < disabledIds.length; i++) disabled[disabledIds[i]] = true;
-      var effective = [];
-      for (var j = 0; j < defaults.length; j++) {
-        var d = defaults[j];
-        if (disabled[d.id]) continue;
-        effective.push({ source: "telegram", channelId: d.id, displayName: d.name || d.id });
+// _loadChannelsForTypes: fetch per-cloud-type channel files and merge them.
+// Falls back to _loadDefaultChannels if no recognised type files exist.
+function _loadChannelsForTypes(types, cb) {
+  var sortedTypes = types.slice().sort();
+  var cacheKey = sortedTypes.join(",");
+  var now = Date.now();
+  if (_typeChannelsCache && _typeChannelsCacheKey === cacheKey && (now - _typeChannelsCacheTime) < 86400000) {
+    _log("Search.typeChannels.cache", { key: cacheKey, count: _typeChannelsCache.length });
+    cb(_typeChannelsCache);
+    return;
+  }
+  var TYPE_FILE_MAP = {
+    "quark":    "channels_quark.json",
+    "cloud115": "channels_115.json",
+    "aliyun":   "channels_aliyun.json",
+    "pan123":   "channels_pan123.json",
+    "tianyi":   "channels_tianyi.json",
+    "pikpak":   "channels_pikpak.json"
+  };
+  var filesToFetch = [];
+  for (var i = 0; i < sortedTypes.length; i++) {
+    var f = TYPE_FILE_MAP[sortedTypes[i]];
+    if (f) filesToFetch.push(f);
+  }
+  if (filesToFetch.length === 0) {
+    _loadDefaultChannels(cb);
+    return;
+  }
+  var base = ($plugin && $plugin.baseURL) ? $plugin.baseURL : "";
+  if (!base) {
+    cb(_builtInForTypes(sortedTypes));
+    return;
+  }
+  var done = 0;
+  var allChannels = [];
+  var seenIds = {};
+  var addList = function (list) {
+    if (Object.prototype.toString.call(list) !== "[object Array]") return;
+    for (var ii = 0; ii < list.length; ii++) {
+      var ch = list[ii];
+      if (ch && ch.id && !seenIds[ch.id]) {
+        seenIds[ch.id] = true;
+        allChannels.push(ch);
       }
-      var customs = (ov && ov.customChannels) || [];
-      for (var k = 0; k < customs.length; k++) {
-        var c = customs[k];
-        // 防止 custom 与 default 重名
-        if (disabled[c.channelId]) continue;
-        effective.push(c);
-      }
-      _log("Search.resolve.effective", {
-        defaults: defaults.length,
-        disabled: disabledIds.length,
-        customs: customs.length,
-        total: effective.length
+    }
+  };
+  var checkDone = function () {
+    done++;
+    if (done < filesToFetch.length) return;
+    if (allChannels.length === 0) {
+      _log("Search.typeChannels.allFailed", { types: sortedTypes });
+      cb(_builtInForTypes(sortedTypes));
+    } else {
+      _typeChannelsCache = allChannels;
+      _typeChannelsCacheKey = cacheKey;
+      _typeChannelsCacheTime = Date.now();
+      _log("Search.typeChannels.loaded", { key: cacheKey, count: allChannels.length });
+      cb(allChannels);
+    }
+  };
+  for (var j = 0; j < filesToFetch.length; j++) {
+    (function (filename) {
+      var url = base + filename;
+      _log("Search.typeChannels.fetch", { url: url });
+      $http.fetch({ url: url, timeout: 10 }).then(function (res) {
+        if (!res.statusCode || res.statusCode < 400) {
+          try { addList(JSON.parse(res.body || "[]")); } catch (e) {}
+        }
+        checkDone();
+      }, function () {
+        checkDone();
       });
-      callback(effective);
-    }, function (err) {
-      // 覆盖读不到时直接用全量默认
-      _log("Search.resolve.overridesFail", { err: err, fallback: defaults.length });
-      var fallback = [];
-      for (var m = 0; m < defaults.length; m++) {
-        fallback.push({ source: "telegram", channelId: defaults[m].id, displayName: defaults[m].name || defaults[m].id });
+    })(filesToFetch[j]);
+  }
+}
+
+function _builtInForTypes(types) {
+  var result = [];
+  var seenIds = {};
+  for (var i = 0; i < types.length; i++) {
+    var list = BUILT_IN_BY_TYPE[types[i]];
+    if (!list) continue;
+    for (var j = 0; j < list.length; j++) {
+      if (!seenIds[list[j].id]) {
+        seenIds[list[j].id] = true;
+        result.push(list[j]);
       }
-      callback(fallback);
+    }
+  }
+  return result.length > 0 ? result : BUILT_IN_CHANNELS;
+}
+
+// _applyOverrides: apply user-level disable/custom overrides on top of a defaults list.
+function _applyOverrides(defaults, callback) {
+  _log("Search.resolve.defaults", { count: defaults.length });
+  $cloud.getChannelOverrides().then(function (ov) {
+    var disabled = {};
+    var disabledIds = (ov && ov.disabledDefaultIds) || [];
+    for (var i = 0; i < disabledIds.length; i++) disabled[disabledIds[i]] = true;
+    var effective = [];
+    for (var j = 0; j < defaults.length; j++) {
+      var d = defaults[j];
+      if (disabled[d.id]) continue;
+      effective.push({ source: "telegram", channelId: d.id, displayName: d.name || d.id });
+    }
+    var customs = (ov && ov.customChannels) || [];
+    for (var k = 0; k < customs.length; k++) {
+      var c = customs[k];
+      if (disabled[c.channelId]) continue;
+      effective.push(c);
+    }
+    _log("Search.resolve.effective", {
+      defaults: defaults.length,
+      disabled: disabledIds.length,
+      customs: customs.length,
+      total: effective.length
     });
+    callback(effective);
+  }, function (err) {
+    _log("Search.resolve.overridesFail", { err: err, fallback: defaults.length });
+    var fallback = [];
+    for (var m = 0; m < defaults.length; m++) {
+      fallback.push({ source: "telegram", channelId: defaults[m].id, displayName: defaults[m].name || defaults[m].id });
+    }
+    callback(fallback);
+  });
+}
+
+function _resolveEffectiveChannels(callback) {
+  // 查询用户已配置的云盘类型，仅加载对应的优选频道文件
+  $cloud.listAvailableClouds().then(function (clouds) {
+    var types = [];
+    for (var i = 0; i < (clouds || []).length; i++) {
+      var entry = clouds[i];
+      var ct = (entry && typeof entry === "object")
+        ? (entry.cloudType || entry.type || "")
+        : String(entry || "");
+      if (ct) types.push(ct);
+    }
+    _log("Search.resolve.availableClouds", { types: types });
+    if (types.length === 0) {
+      // 无任何云盘配置 → 搜索全量频道
+      _loadDefaultChannels(function (defaults) { _applyOverrides(defaults, callback); });
+      return;
+    }
+    _loadChannelsForTypes(types, function (defaults) { _applyOverrides(defaults, callback); });
+  }, function (err) {
+    // listAvailableClouds 不支持或失败 → 降级为全量频道
+    _log("Search.resolve.listCloudsError", { err: err });
+    _loadDefaultChannels(function (defaults) { _applyOverrides(defaults, callback); });
   });
 }
 

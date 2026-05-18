@@ -11,7 +11,18 @@ var TG_TAG_RE = /href="\?q=([^"]+)"[^>]*>#([^<]+)</g;
 
 function _stripHTML(html) {
   if (!html) return "";
-  return String(html)
+  // Telegram renders URLs as <a href="url">url</a> (text = URL) but some channels
+  // use decorative anchor text like <a href="https://...">点击查看</a>. In that case
+  // stripping tags would lose the actual URL. Expand anchors first so the href
+  // is always present in the resulting plain text even if anchor text differs.
+  var withHrefs = String(html).replace(
+    /<a\b[^>]*\shref="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi,
+    function(match, href, inner) {
+      var innerText = inner.replace(/<[^>]+>/g, "").trim();
+      return (innerText && innerText !== href) ? innerText + " " + href : href;
+    }
+  );
+  return withHrefs
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ")

@@ -1,6 +1,8 @@
 var CLOUD_PATTERNS = [
   { type: "quark",    re: /https?:\/\/pan\.quark\.cn\/s\/[A-Za-z0-9]+/g },
-  { type: "cloud115", re: /https?:\/\/(?:115\.com|anxia\.com|115cdn\.com)\/s\/[A-Za-z0-9?#=&_-]+/g }
+  { type: "cloud115", re: /https?:\/\/(?:115\.com|anxia\.com|115cdn\.com)\/s\/[A-Za-z0-9%@!?#=&_.~-]+/g },
+  { type: "pan123",   re: /https?:\/\/(?:www\.123pan\.com|123684\.xyz|www\.123865\.com|www\.123912\.com)\/s\/[A-Za-z0-9_-]+/g },
+  { type: "tianyi",   re: /https?:\/\/cloud\.189\.cn\/(?:t\/[A-Za-z0-9]+|web\/share\?code=[A-Za-z0-9]+)/g }
 ];
 
 function extractCloudLinks(text) {

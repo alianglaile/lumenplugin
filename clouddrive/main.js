@@ -25,27 +25,44 @@ function _loadDefaultChannels(cb) {
   // 24h 命中插件自身缓存：避免每次搜索都拉一次远端 channels.json
   var now = Date.now();
   if (_channelsCache && (now - _channelsCacheTime) < 86400000) {
+    _log("Search.defaultChannels.cache", { count: _channelsCache.length });
     cb(_channelsCache);
     return;
   }
   var base = ($plugin && $plugin.baseURL) ? $plugin.baseURL : "";
   if (!base) {
+    _log("Search.defaultChannels.noBaseURL", { plugin: typeof $plugin });
     cb([]);
     return;
   }
-  $http.fetch({ url: base + "channels.json", timeout: 10 }).then(function (res) {
+  var channelsURL = base + "channels.json";
+  _log("Search.defaultChannels.fetch", { url: channelsURL });
+  $http.fetch({ url: channelsURL, timeout: 10 }).then(function (res) {
+    _log("Search.defaultChannels.response", {
+      status: res.statusCode,
+      bodyLen: (res.body || "").length
+    });
+    if (res.statusCode && res.statusCode >= 400) {
+      _log("Search.defaultChannels.httpError", { status: res.statusCode, url: channelsURL });
+      cb(_channelsCache || []);
+      return;
+    }
     try {
       var list = JSON.parse(res.body || "[]");
       if (Object.prototype.toString.call(list) !== "[object Array]") list = [];
+      _log("Search.defaultChannels.loaded", { count: list.length });
       _channelsCache = list;
       _channelsCacheTime = now;
       cb(list);
     } catch (e) {
-      _log("Search.defaultsParseFail", { err: String(e) });
+      _log("Search.defaultChannels.parseFail", {
+        err: String(e),
+        bodyHead: (res.body || "").substring(0, 120)
+      });
       cb(_channelsCache || []);
     }
   }, function (err) {
-    _log("Search.defaultsFetchFail", { err: err });
+    _log("Search.defaultChannels.fetchFail", { err: err, url: channelsURL });
     cb(_channelsCache || []);
   });
 }
@@ -53,6 +70,7 @@ function _loadDefaultChannels(cb) {
 function _resolveEffectiveChannels(callback) {
   // 默认列表 + 用户覆盖：禁用 ID 过滤掉、追加自定义频道
   _loadDefaultChannels(function (defaults) {
+    _log("Search.resolve.defaults", { count: defaults.length });
     $cloud.getChannelOverrides().then(function (ov) {
       var disabled = {};
       var disabledIds = (ov && ov.disabledDefaultIds) || [];
@@ -70,9 +88,16 @@ function _resolveEffectiveChannels(callback) {
         if (disabled[c.channelId]) continue;
         effective.push(c);
       }
+      _log("Search.resolve.effective", {
+        defaults: defaults.length,
+        disabled: disabledIds.length,
+        customs: customs.length,
+        total: effective.length
+      });
       callback(effective);
-    }, function () {
+    }, function (err) {
       // 覆盖读不到时直接用全量默认
+      _log("Search.resolve.overridesFail", { err: err, fallback: defaults.length });
       var fallback = [];
       for (var m = 0; m < defaults.length; m++) {
         fallback.push({ source: "telegram", channelId: defaults[m].id, displayName: defaults[m].name || defaults[m].id });
@@ -136,9 +161,14 @@ function _normalizeChannelId(raw) {
 
 function _fetchChannel(channel, keyword, onComplete) {
   var channelId = _normalizeChannelId(channel.channelId);
-  if (!channelId) { onComplete([]); return; }
+  if (!channelId) {
+    _log("Search.channel.emptyId", { raw: channel.channelId });
+    onComplete([]);
+    return;
+  }
   var url = "https://t.me/s/" + encodeURIComponent(channelId) +
             "?q=" + encodeURIComponent(keyword);
+  _log("Search.channel.fetch", { channel: channelId, url: url });
   $http.fetch({
     url: url,
     method: "GET",
@@ -150,14 +180,22 @@ function _fetchChannel(channel, keyword, onComplete) {
     }
   }).then(function (res) {
     if (res.statusCode && res.statusCode >= 400) {
-      _log("Search.channelHTTPError", { channel: channelId, status: res.statusCode });
+      _log("Search.channel.httpError", { channel: channelId, status: res.statusCode });
       onComplete([]);
       return;
     }
-    var medias = _messagesToMedias(parseTGPage(res.body || ""), channel);
+    var msgs = parseTGPage(res.body || "");
+    var medias = _messagesToMedias(msgs, channel);
+    _log("Search.channel.done", {
+      channel: channelId,
+      status: res.statusCode,
+      bodyLen: (res.body || "").length,
+      msgs: msgs.length,
+      medias: medias.length
+    });
     onComplete(medias);
   }, function (err) {
-    _log("Search.channelError", { channel: channelId, err: err });
+    _log("Search.channel.networkError", { channel: channelId, err: err });
     onComplete([]);
   });
 }

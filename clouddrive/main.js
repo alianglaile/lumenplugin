@@ -15,6 +15,101 @@ function _log(label, params) {
 
 var SINGLE_CHANNEL_TIMEOUT_SEC = 10;
 
+// Built-in channel list — guaranteed to work even when channels.json is not deployed
+// or is unreachable. A remote channels.json (fetched via $plugin.baseURL) overrides
+// this list at runtime when available.
+var BUILT_IN_CHANNELS = [
+  {"name":"tgsearchers3","id":"tgsearchers3"},
+  {"name":"Aliyun_4K_Movies","id":"Aliyun_4K_Movies"},
+  {"name":"bdbdndn11","id":"bdbdndn11"},
+  {"name":"yunpanx","id":"yunpanx"},
+  {"name":"bsbdbfjfjff","id":"bsbdbfjfjff"},
+  {"name":"yp123pan","id":"yp123pan"},
+  {"name":"sbsbsnsqq","id":"sbsbsnsqq"},
+  {"name":"yunpanxunlei","id":"yunpanxunlei"},
+  {"name":"tianyifc","id":"tianyifc"},
+  {"name":"BaiduCloudDisk","id":"BaiduCloudDisk"},
+  {"name":"txtyzy","id":"txtyzy"},
+  {"name":"peccxinpd","id":"peccxinpd"},
+  {"name":"gotopan","id":"gotopan"},
+  {"name":"PanjClub","id":"PanjClub"},
+  {"name":"kkxlzy","id":"kkxlzy"},
+  {"name":"baicaoZY","id":"baicaoZY"},
+  {"name":"MCPH01","id":"MCPH01"},
+  {"name":"bdwpzhpd","id":"bdwpzhpd"},
+  {"name":"ysxb48","id":"ysxb48"},
+  {"name":"jdjdn1111","id":"jdjdn1111"},
+  {"name":"yggpan","id":"yggpan"},
+  {"name":"MCPH086","id":"MCPH086"},
+  {"name":"zaihuayun","id":"zaihuayun"},
+  {"name":"Q66Share","id":"Q66Share"},
+  {"name":"ucwpzy","id":"ucwpzy"},
+  {"name":"shareAliyun","id":"shareAliyun"},
+  {"name":"alyp_1","id":"alyp_1"},
+  {"name":"dianyingshare","id":"dianyingshare"},
+  {"name":"Quark_Movies","id":"Quark_Movies"},
+  {"name":"XiangxiuNBB","id":"XiangxiuNBB"},
+  {"name":"ydypzyfx","id":"ydypzyfx"},
+  {"name":"ucquark","id":"ucquark"},
+  {"name":"xx123pan","id":"xx123pan"},
+  {"name":"yingshifenxiang123","id":"yingshifenxiang123"},
+  {"name":"zyfb123","id":"zyfb123"},
+  {"name":"tyypzhpd","id":"tyypzhpd"},
+  {"name":"tianyirigeng","id":"tianyirigeng"},
+  {"name":"cloudtianyi","id":"cloudtianyi"},
+  {"name":"hdhhd21","id":"hdhhd21"},
+  {"name":"Lsp115","id":"Lsp115"},
+  {"name":"oneonefivewpfx","id":"oneonefivewpfx"},
+  {"name":"qixingzhenren","id":"qixingzhenren"},
+  {"name":"taoxgzy","id":"taoxgzy"},
+  {"name":"Channel_Shares_115","id":"Channel_Shares_115"},
+  {"name":"tyysypzypd","id":"tyysypzypd"},
+  {"name":"vip115hot","id":"vip115hot"},
+  {"name":"wp123zy","id":"wp123zy"},
+  {"name":"yunpan139","id":"yunpan139"},
+  {"name":"yunpan189","id":"yunpan189"},
+  {"name":"yunpanuc","id":"yunpanuc"},
+  {"name":"yydf_hzl","id":"yydf_hzl"},
+  {"name":"leoziyuan","id":"leoziyuan"},
+  {"name":"pikpakpan","id":"pikpakpan"},
+  {"name":"Q_dongman","id":"Q_dongman"},
+  {"name":"yoyokuakeduanju","id":"yoyokuakeduanju"},
+  {"name":"TG654TG","id":"TG654TG"},
+  {"name":"WFYSFX02","id":"WFYSFX02"},
+  {"name":"QukanMovie","id":"QukanMovie"},
+  {"name":"yeqingjie_GJG666","id":"yeqingjie_GJG666"},
+  {"name":"movielover8888_film3","id":"movielover8888_film3"},
+  {"name":"Baidu_netdisk","id":"Baidu_netdisk"},
+  {"name":"D_wusun","id":"D_wusun"},
+  {"name":"FLMdongtianfudi","id":"FLMdongtianfudi"},
+  {"name":"KaiPanshare","id":"KaiPanshare"},
+  {"name":"QQZYDAPP","id":"QQZYDAPP"},
+  {"name":"rjyxfx","id":"rjyxfx"},
+  {"name":"PikPak_Share_Channel","id":"PikPak_Share_Channel"},
+  {"name":"btzhi","id":"btzhi"},
+  {"name":"newproductsourcing","id":"newproductsourcing"},
+  {"name":"cctv1211","id":"cctv1211"},
+  {"name":"duan_ju","id":"duan_ju"},
+  {"name":"QuarkFree","id":"QuarkFree"},
+  {"name":"yunpanNB","id":"yunpanNB"},
+  {"name":"kkdj001","id":"kkdj001"},
+  {"name":"xxzlzn","id":"xxzlzn"},
+  {"name":"pxyunpanxunlei","id":"pxyunpanxunlei"},
+  {"name":"jxwpzy","id":"jxwpzy"},
+  {"name":"kuakedongman","id":"kuakedongman"},
+  {"name":"liangxingzhinan","id":"liangxingzhinan"},
+  {"name":"xiangnikanj","id":"xiangnikanj"},
+  {"name":"guoman4K","id":"guoman4K"},
+  {"name":"zdqxm","id":"zdqxm"},
+  {"name":"kduanju","id":"kduanju"},
+  {"name":"cilidianying","id":"cilidianying"},
+  {"name":"CBduanju","id":"CBduanju"},
+  {"name":"SharePanFilms","id":"SharePanFilms"},
+  {"name":"dzsgx","id":"dzsgx"},
+  {"name":"BooksRealm","id":"BooksRealm"},
+  {"name":"Oscar_4Kmovies","id":"Oscar_4Kmovies"}
+];
+
 // ============================================================
 // Search: 跨多个 TG 频道并发抓取，匹配网盘链接，归一化为 MediaData
 // ============================================================
@@ -43,13 +138,16 @@ function _loadDefaultChannels(cb) {
       bodyLen: (res.body || "").length
     });
     if (res.statusCode && res.statusCode >= 400) {
-      _log("Search.defaultChannels.httpError", { status: res.statusCode, url: channelsURL });
-      cb(_channelsCache || []);
+      _log("Search.defaultChannels.httpError", { status: res.statusCode, url: channelsURL, fallback: BUILT_IN_CHANNELS.length });
+      cb(_channelsCache || BUILT_IN_CHANNELS);
       return;
     }
     try {
       var list = JSON.parse(res.body || "[]");
-      if (Object.prototype.toString.call(list) !== "[object Array]") list = [];
+      if (Object.prototype.toString.call(list) !== "[object Array]" || list.length === 0) {
+        _log("Search.defaultChannels.remoteEmpty", { fallback: BUILT_IN_CHANNELS.length });
+        list = BUILT_IN_CHANNELS;
+      }
       _log("Search.defaultChannels.loaded", { count: list.length });
       _channelsCache = list;
       _channelsCacheTime = now;
@@ -57,13 +155,14 @@ function _loadDefaultChannels(cb) {
     } catch (e) {
       _log("Search.defaultChannels.parseFail", {
         err: String(e),
-        bodyHead: (res.body || "").substring(0, 120)
+        bodyHead: (res.body || "").substring(0, 120),
+        fallback: BUILT_IN_CHANNELS.length
       });
-      cb(_channelsCache || []);
+      cb(_channelsCache || BUILT_IN_CHANNELS);
     }
   }, function (err) {
-    _log("Search.defaultChannels.fetchFail", { err: err, url: channelsURL });
-    cb(_channelsCache || []);
+    _log("Search.defaultChannels.fetchFail", { err: err, url: channelsURL, fallback: BUILT_IN_CHANNELS.length });
+    cb(_channelsCache || BUILT_IN_CHANNELS);
   });
 }
 

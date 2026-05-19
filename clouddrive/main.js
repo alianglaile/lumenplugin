@@ -822,10 +822,14 @@ function _keywordBigramMatchRatio(compactTitle, compactRaw, compactKeyword) {
 
 function _sourceQualityScore(media) {
   var id = String(media && media._channelId || "");
-  if (RANK_SOURCE_WEIGHTS[id] !== undefined) return RANK_SOURCE_WEIGHTS[id];
+  if (RANK_SOURCE_WEIGHTS[id] !== undefined) return _resultSourceScore(RANK_SOURCE_WEIGHTS[id]);
   var name = String(media && media._channelName || "");
-  if (RANK_SOURCE_WEIGHTS[name] !== undefined) return RANK_SOURCE_WEIGHTS[name];
-  return 30;
+  if (RANK_SOURCE_WEIGHTS[name] !== undefined) return _resultSourceScore(RANK_SOURCE_WEIGHTS[name]);
+  return 10;
+}
+
+function _resultSourceScore(rawWeight) {
+  return Math.round(rawWeight * 0.35);
 }
 
 function _timeFreshnessScore(pubDate, nowSec) {
@@ -845,9 +849,9 @@ function _resourceCompletenessScore(titleLower) {
   // 非视频内容（电子书、音乐等）— 重度降权，这类分享通常不能直接播放。
   if (/电子书|有声书|漫画|有声剧|小说|\.epub|\.pdf|\.mobi|\.azw3/.test(titleLower)) return -220;
 
-  if (/合集|全集|全季|全剧|完整版|complete/.test(titleLower)) return 180;
+  if (/合集|全集|全季|全剧|完整版|complete/.test(titleLower)) return 320;
 
-  if (/完结|大结局/.test(titleLower)) return 155;
+  if (/完结|大结局/.test(titleLower)) return 300;
 
   // 集数范围（如 "第1-48集", "01-24集", "全24集", "共48集"）
   var m = titleLower.match(
@@ -857,19 +861,19 @@ function _resourceCompletenessScore(titleLower) {
     var count = 0;
     if (m[1] && m[2]) count = parseInt(m[2], 10) - parseInt(m[1], 10) + 1;
     else if (m[3])     count = parseInt(m[3], 10);
-    if      (count >= 40) return 145;
-    else if (count >= 20) return 125;
-    else if (count >= 10) return 95;
-    else if (count >= 4)  return 65;
-    else if (count >= 2)  return 30;
-    return 10;
+    if      (count >= 40) return 280;
+    else if (count >= 20) return 260;
+    else if (count >= 10) return 210;
+    else if (count >= 4)  return 140;
+    else if (count >= 2)  return 80;
+    return 20;
   }
 
   var updateNo = _extractUpdateEpisodeNumber(titleLower);
-  if (updateNo > 0) return Math.min(145, 60 + updateNo * 5);
+  if (updateNo > 0) return Math.min(260, Math.max(80, updateNo * 20));
 
   // 正在更新中（连载）
-  if (/最新|已更新|更新至|已?更至|连载/.test(titleLower)) return 70;
+  if (/最新|已更新|更新至|已?更至|连载/.test(titleLower)) return 100;
 
   // 明确单集标记（且无范围）— 轻微降权
   if (/第\s*\d+\s*集/.test(titleLower)) return -45;

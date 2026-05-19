@@ -13,7 +13,8 @@ function _log(label, params) {
   try { console.log("[clouddrive:" + label + "] " + JSON.stringify(params || {})); } catch (e) {}
 }
 
-var SINGLE_CHANNEL_TIMEOUT_SEC = 10;
+var SINGLE_CHANNEL_TIMEOUT_SEC = 5;
+var SEARCH_RESULT_LIMIT = 6;
 
 // Built-in channel list — guaranteed to work even when channels.json is not deployed
 // or is unreachable. A remote channels.json (fetched via $plugin.baseURL) overrides
@@ -110,14 +111,14 @@ var BUILT_IN_CHANNELS = [
   {"name":"Oscar_4Kmovies","id":"Oscar_4Kmovies"}
 ];
 
-// Per-cloud-type optimized channel lists — populated only after eval_quark_channels.js
-// (or equivalent) has been run and a Top-3 ranking confirmed.
-// Other cloud types will be added here once their evaluation scripts are run.
+// Per-cloud-type optimized channel lists. Keep these small, but include channels
+// that improve title coverage for real searches in addition to raw hit volume.
 var BUILT_IN_BY_TYPE = {
   "quark": [
     {"name":"leoziyuan","id":"leoziyuan"},
     {"name":"Quark_Movies","id":"Quark_Movies"},
-    {"name":"baicaoZY","id":"baicaoZY"}
+    {"name":"baicaoZY","id":"baicaoZY"},
+    {"name":"ucquark","id":"ucquark"}
   ]
 };
 
@@ -445,7 +446,10 @@ function _messagesToMedias(messages, channel) {
 
 function _buildMedia(msg, link, passcode, channel) {
   var title = msg.title || ("分享 " + msg.messageId);
-  var desc = (msg.pubDate || "") + " · " + link.type + (channel ? (" · " + (channel.displayName || channel.channelId)) : "");
+  var epHint = _extractEpisodeHint(title);
+  var desc = (msg.pubDate || "") + " · " + link.type +
+             (epHint ? (" · " + epHint) : "") +
+             (channel ? (" · " + (channel.displayName || channel.channelId)) : "");
   var detail = "clouddrive://share?type=" + encodeURIComponent(link.type) +
                "&url=" + encodeURIComponent(link.url) +
                "&passcode=" + encodeURIComponent(passcode || "") +
@@ -460,7 +464,28 @@ function _buildMedia(msg, link, passcode, channel) {
   // 非标准字段，仅 JS 内部排序使用，Lumen MediaData 解码会忽略未知字段
   media._pubDate = msg.pubDate || "";
   media._shareUrl = link.url;
+  media._cloudType = link.type;
+  media._channelId = channel ? _normalizeChannelId(channel.channelId) : "";
+  media._channelName = channel ? String(channel.displayName || channel.channelId || "") : "";
+  media._rawText = msg.text || "";
   return media;
+}
+
+function _extractEpisodeHint(title) {
+  if (!title) return "";
+  var t = title.toLowerCase();
+  if (/合集|全集|完整版/.test(t)) return "全集";
+  if (/完结|大结局/.test(t)) return "完结";
+  var m = t.match(/(?:第?\s*0*(\d+)\s*[-~至到]\s*0*(\d+)\s*集)|(?:[全共]\s*0*(\d+)\s*集)/);
+  if (m) {
+    var count = 0;
+    if (m[1] && m[2]) count = parseInt(m[2], 10) - parseInt(m[1], 10) + 1;
+    else if (m[3])     count = parseInt(m[3], 10);
+    if (count > 0) return "共" + count + "集";
+  }
+  var m2 = t.match(/(?:更新至|已?更至|最新).{0,4}第\s*(\d+)\s*集/);
+  if (m2) return "更新至第" + m2[1] + "集";
+  return "";
 }
 
 function _hashStr(s) {
@@ -502,78 +527,47 @@ function _validateAndEmit(medias, key, keyword) {
     return;
   }
   var kw = String(keyword || "").toLowerCase();
-  // Build dedup'd validation requests
-  var seen = {};
-  var reqs = [];
-  for (var i = 0; i < medias.length; i++) {
-    var r = _extractShareReq(medias[i]);
-    if (!r || seen[r.shareUrl]) continue;
-    seen[r.shareUrl] = true;
-    reqs.push(r);
-  }
-  if (reqs.length === 0) {
-    var rankedRaw = _rankMedias(medias, kw);
-    _log("Search.emit", { count: rankedRaw.length, validated: 0 });
-    $next.toSearchMedias(JSON.stringify(rankedRaw), String(key || ""));
-    return;
-  }
-  _log("Search.validate.begin", { unique: reqs.length, totalCards: medias.length });
-  $cloud.validateShares(reqs).then(function (results) {
-    // state: ok / bad / locked / uncertain
-    var stateByUrl = {};
-    var badCount = 0, lockedCount = 0;
-    for (var j = 0; j < results.length; j++) {
-      var r = results[j];
-      var st = r.state || (r.isValid === false ? "bad" : "ok");
-      stateByUrl[r.shareUrl] = st;
-      if (st === "bad") badCount++;
-      else if (st === "locked") lockedCount++;
-    }
-    var kept = [];
-    for (var k = 0; k < medias.length; k++) {
-      var req2 = _extractShareReq(medias[k]);
-      if (!req2) { kept.push(medias[k]); continue; }
-      var s = stateByUrl[req2.shareUrl];
-      if (s === "bad") continue;                 // 明确失效 → 丢
-      if (s === "locked") {                      // 需提取码 → 保留，加锁标记
-        var m = medias[k];
-        if (m.title.indexOf("🔒") !== 0) m.title = "🔒 " + m.title;
-        m.descriptionText = (m.descriptionText || "") + " · 需提取码";
-        kept.push(m);
-      } else {
-        kept.push(medias[k]);                   // ok / uncertain / unknown → 保留
-      }
-    }
-    var ranked = _rankMedias(kept, kw);
-    _log("Search.emit", {
-      count: ranked.length,
-      droppedBad: badCount,
-      keptLocked: lockedCount,
-      totalIn: medias.length
-    });
-    $next.toSearchMedias(JSON.stringify(ranked), String(key || ""));
-  }, function (err) {
-    // Validation failed entirely — fall back to emitting unvalidated (don't punish the user).
-    _log("Search.validate.error", { err: err, fallbackCount: medias.length });
-    $next.toSearchMedias(JSON.stringify(medias), String(key || ""));
+  var rankable = _filterRankableMedias(medias, kw);
+  var ranked = _limitSearchResults(_rankMedias(rankable, kw));
+  _log("Search.emit", {
+    count: ranked.length,
+    droppedWeak: medias.length - rankable.length,
+    totalIn: medias.length,
+    validation: "skipped_for_fast_search"
   });
+  $next.toSearchMedias(JSON.stringify(ranked), String(key || ""));
 }
 
 // ============================================================
-// Ranking: time + keyword-in-title + (channel weight reserved)
-// 借鉴 fish2018/pansou 的三维加权
+// Ranking: keyword relevance + source quality + time freshness + resource quality.
+// 参考 PanSou 的确定性打分：先确保搜索词强相关，再用频道质量、时间、合集/完结/画质校正。
 // ============================================================
+var RANK_SOURCE_WEIGHTS = {
+  "leoziyuan": 180,
+  "Quark_Movies": 160,
+  "baicaoZY": 140,
+  "ucquark": 115,
+  "Oscar_4Kmovies": 120,
+  "SharePanFilms": 105,
+  "Aliyun_4K_Movies": 90,
+  "TG654TG": 80,
+  "WFYSFX02": 80,
+  "QukanMovie": 75
+};
+
 function _rankMedias(medias, keywordLower) {
   if (!medias || medias.length === 0) return medias;
   var nowSec = Math.floor(Date.now() / 1000);
   var kw = String(keywordLower || "").toLowerCase().trim();
-  // 装饰 → 排序 → 还原
   var decorated = [];
   for (var i = 0; i < medias.length; i++) {
-    decorated.push({ media: medias[i], score: _scoreMedia(medias[i], kw, nowSec), originalIdx: i });
+    decorated.push({ media: medias[i], score: _scoreMediaBreakdown(medias[i], kw, nowSec), originalIdx: i });
   }
   decorated.sort(function (a, b) {
-    if (b.score !== a.score) return b.score - a.score;
+    if (b.score.total !== a.score.total) return b.score.total - a.score.total;
+    if (b.score.keyword !== a.score.keyword) return b.score.keyword - a.score.keyword;
+    if (b.score.source !== a.score.source) return b.score.source - a.score.source;
+    if (b.score.time !== a.score.time) return b.score.time - a.score.time;
     return a.originalIdx - b.originalIdx;
   });
   var out = [];
@@ -582,40 +576,207 @@ function _rankMedias(medias, keywordLower) {
 }
 
 function _scoreMedia(media, keywordLower, nowSec) {
+  return _scoreMediaBreakdown(media, keywordLower, nowSec).total;
+}
+
+function _limitSearchResults(medias) {
+  if (!medias || medias.length <= SEARCH_RESULT_LIMIT) return medias || [];
+  return medias.slice(0, SEARCH_RESULT_LIMIT);
+}
+
+function _filterRankableMedias(medias, keywordLower) {
+  if (!medias || medias.length === 0) return [];
+  var kw = String(keywordLower || "").toLowerCase().trim();
+  if (!kw) return medias;
+  var nowSec = Math.floor(Date.now() / 1000);
+  var out = [];
+  for (var i = 0; i < medias.length; i++) {
+    var score = _scoreMediaBreakdown(medias[i], kw, nowSec);
+    if (score.keyword >= 260) out.push(medias[i]);
+  }
+  return out;
+}
+
+function _scoreMediaBreakdown(media, keywordLower, nowSec) {
+  var title = String(media && media.title || "");
+  var titleLower = title.toLowerCase();
+  var rawLower = String(media && media._rawText || "").toLowerCase();
+  var keyword = String(keywordLower || "").toLowerCase().trim();
+  var keywordScore = _keywordRelevanceScore(titleLower, rawLower, keyword);
+  var sourceScore = _sourceQualityScore(media);
+  var timeScore = _timeFreshnessScore(media && media._pubDate || "", nowSec);
+  var resourceScore = _resourceCompletenessScore(titleLower);
+  var qualityScore = _qualityScore(titleLower);
+  var penalty = _rankingPenalty(media, titleLower, keyword, keywordScore);
+  var total = keywordScore + sourceScore + timeScore + resourceScore + qualityScore + penalty;
+  return {
+    total: total,
+    keyword: keywordScore,
+    source: sourceScore,
+    time: timeScore,
+    resource: resourceScore,
+    quality: qualityScore,
+    penalty: penalty
+  };
+}
+
+function _keywordRelevanceScore(titleLower, rawLower, keywordLower) {
+  if (!keywordLower) return 0;
+  var compactTitle = _compactSearchText(titleLower);
+  var compactRaw = _compactSearchText(rawLower);
+  var compactKeyword = _compactSearchText(keywordLower);
+  if (!compactKeyword) return 0;
+
+  var titleScore = 0;
+  var exactIdx = compactTitle.indexOf(compactKeyword);
+  if (exactIdx >= 0) {
+    titleScore += 620;
+    if (exactIdx <= 8) titleScore += 80;
+  }
+
+  var parts = _keywordParts(compactKeyword);
+  if (parts.length > 0) {
+    var matchedLen = 0;
+    var missingImportant = 0;
+    for (var i = 0; i < parts.length; i++) {
+      if (compactTitle.indexOf(parts[i]) >= 0) {
+        matchedLen += parts[i].length;
+      } else if (parts[i].length >= 2) {
+        missingImportant++;
+      }
+    }
+    titleScore += Math.round((matchedLen / Math.max(1, compactKeyword.length)) * 260);
+    if (exactIdx < 0 && missingImportant > 0) titleScore -= Math.min(240, missingImportant * 120);
+  }
+
+  var bigramRatio = _keywordBigramMatchRatio(compactTitle, "", compactKeyword);
+  titleScore += Math.round(bigramRatio * 160);
+
+  var rawScore = 0;
+  if (compactRaw.indexOf(compactKeyword) >= 0) {
+    rawScore = 220;
+  } else if (parts.length > 0) {
+    var rawMatchedLen = 0;
+    for (var j = 0; j < parts.length; j++) {
+      if (compactRaw.indexOf(parts[j]) >= 0) rawMatchedLen += parts[j].length;
+    }
+    rawScore = Math.round((rawMatchedLen / Math.max(1, compactKeyword.length)) * 90);
+  }
+
+  var score = Math.max(titleScore, rawScore);
+  if (score < 0) return 0;
+  return Math.min(score, 1000);
+}
+
+function _compactSearchText(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[【】\[\]（）()「」『』《》<>〈〉·・•,，.。:：;；!！?？'"“”‘’_\-\s\/\\|]/g, "")
+    .replace(/第二季|第2季|s02/g, "2")
+    .replace(/第一季|第1季|s01/g, "1");
+}
+
+function _keywordParts(compactKeyword) {
+  var raw = String(compactKeyword || "").replace(/[的之与和]/g, " ");
+  var split = raw.split(/\s+/);
+  var out = [];
+  var seen = {};
+  for (var i = 0; i < split.length; i++) {
+    var part = split[i];
+    if (part.length < 2 || seen[part]) continue;
+    seen[part] = true;
+    out.push(part);
+  }
+  if (out.length === 0 && compactKeyword.length >= 2) out.push(compactKeyword);
+  return out;
+}
+
+function _keywordBigramMatchRatio(compactTitle, compactRaw, compactKeyword) {
+  var key = String(compactKeyword || "").replace(/[的之与和]/g, "");
+  if (key.length < 2) return 0;
+  var total = 0;
+  var matched = 0;
+  var seen = {};
+  for (var i = 0; i < key.length - 1; i++) {
+    var gram = key.substring(i, i + 2);
+    if (seen[gram]) continue;
+    seen[gram] = true;
+    total++;
+    if (compactTitle.indexOf(gram) >= 0 || compactRaw.indexOf(gram) >= 0) matched++;
+  }
+  return total > 0 ? (matched / total) : 0;
+}
+
+function _sourceQualityScore(media) {
+  var id = String(media && media._channelId || "");
+  if (RANK_SOURCE_WEIGHTS[id] !== undefined) return RANK_SOURCE_WEIGHTS[id];
+  var name = String(media && media._channelName || "");
+  if (RANK_SOURCE_WEIGHTS[name] !== undefined) return RANK_SOURCE_WEIGHTS[name];
+  return 30;
+}
+
+function _timeFreshnessScore(pubDate, nowSec) {
+  var pubSec = _parseISODateSec(pubDate || "");
+  if (pubSec <= 0) return 0;
+  var ageDays = Math.max(0, (nowSec - pubSec) / 86400);
+  if      (ageDays <= 1)   return 220;
+  else if (ageDays <= 3)   return 180;
+  else if (ageDays <= 7)   return 145;
+  else if (ageDays <= 30)  return 105;
+  else if (ageDays <= 90)  return 65;
+  else if (ageDays <= 365) return 30;
+  return 10;
+}
+
+function _resourceCompletenessScore(titleLower) {
+  // 非视频内容（电子书、音乐等）— 重度降权，这类分享通常不能直接播放。
+  if (/电子书|有声书|漫画|有声剧|小说|\.epub|\.pdf|\.mobi|\.azw3/.test(titleLower)) return -220;
+
+  if (/合集|全集|全季|全剧|完整版|complete/.test(titleLower)) return 180;
+
+  if (/完结|大结局/.test(titleLower)) return 155;
+
+  // 集数范围（如 "第1-48集", "01-24集", "全24集", "共48集"）
+  var m = titleLower.match(
+    /(?:第?\s*0*(\d+)\s*[-~至到]\s*0*(\d+)\s*集)|(?:[全共]\s*0*(\d+)\s*集)/
+  );
+  if (m) {
+    var count = 0;
+    if (m[1] && m[2]) count = parseInt(m[2], 10) - parseInt(m[1], 10) + 1;
+    else if (m[3])     count = parseInt(m[3], 10);
+    if      (count >= 40) return 145;
+    else if (count >= 20) return 125;
+    else if (count >= 10) return 95;
+    else if (count >= 4)  return 65;
+    else if (count >= 2)  return 30;
+    return 10;
+  }
+
+  // 正在更新中（连载）
+  if (/最新|已更新|更新至|已?更至|连载/.test(titleLower)) return 70;
+
+  // 明确单集标记（且无范围）— 轻微降权
+  if (/第\s*\d+\s*集/.test(titleLower)) return -45;
+
+  return 0;
+}
+
+function _qualityScore(titleLower) {
   var score = 0;
-  var title = String(media.title || "").toLowerCase();
+  if      (/4k|2160p|uhd/.test(titleLower))  score += 60;
+  else if (/1080p|fhd|蓝光/.test(titleLower)) score += 42;
+  else if (/720p|\bhd\b/.test(titleLower))    score += 22;
 
-  // 关键词分（前部匹配 / 出现次数）
-  if (keywordLower.length > 0) {
-    var idx = title.indexOf(keywordLower);
-    if (idx >= 0) {
-      score += 10;
-      if (idx <= 5) score += 5;              // 标题前部命中
-    }
-    // 命中次数（粗略）
-    var rest = title;
-    var hits = 0;
-    while (rest.length > 0) {
-      var p = rest.indexOf(keywordLower);
-      if (p < 0) break;
-      hits++;
-      rest = rest.substring(p + keywordLower.length);
-    }
-    if (hits > 1) score += Math.min(hits - 1, 3) * 2;
-  }
+  if (/高码|高刷|hdr|杜比|dolby|remux/.test(titleLower)) score += 18;
+  return Math.min(score, 80);
+}
 
-  // 时间分（最近 7 天内每天 -2 分；超过 7 天衰减为常数 0）
-  var pubSec = _parseISODateSec(media._pubDate || "");
-  if (pubSec > 0) {
-    var ageDays = (nowSec - pubSec) / 86400;
-    if (ageDays < 0) ageDays = 0;
-    score += Math.max(0, 14 - ageDays * 2);
-  }
-
-  // 锁定卡片轻微降权（用户更想要无密的）
-  if (String(media.title || "").indexOf("🔒") === 0) score -= 4;
-
-  return score;
+function _rankingPenalty(media, titleLower, keywordLower, keywordScore) {
+  var penalty = 0;
+  if (String(media && media.title || "").indexOf("🔒") === 0) penalty -= 40;
+  if (/预告|花絮|解说|影评|reaction|cut\b|片段/.test(titleLower)) penalty -= 180;
+  if (keywordLower && keywordScore < 260) penalty -= 260;
+  return penalty;
 }
 
 function _parseISODateSec(s) {

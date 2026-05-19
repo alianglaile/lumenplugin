@@ -15,6 +15,8 @@ function _log(label, params) {
 
 var SINGLE_CHANNEL_TIMEOUT_SEC = 5;
 var SEARCH_RESULT_LIMIT = 6;
+var SEARCH_CHANNEL_LIMIT = 8;
+var SEARCH_MIN_COMPLETED_CHANNELS = 4;
 
 // Built-in channel list — guaranteed to work even when channels.json is not deployed
 // or is unreachable. A remote channels.json (fetched via $plugin.baseURL) overrides
@@ -313,33 +315,46 @@ function _resolveEffectiveChannels(callback) {
   // 查询用户已配置的云盘类型，仅加载对应的优选频道文件
   $cloud.listAvailableClouds().then(function (clouds) {
     var types = [];
+    var seenTypes = {};
     for (var i = 0; i < (clouds || []).length; i++) {
       var entry = clouds[i];
       var ct = (entry && typeof entry === "object")
         ? (entry.cloudType || entry.type || "")
         : String(entry || "");
-      if (ct) types.push(ct);
+      if (ct && !seenTypes[ct]) {
+        seenTypes[ct] = true;
+        types.push(ct);
+      }
     }
     _log("Search.resolve.availableClouds", { types: types });
     if (types.length === 0) {
-      // 无任何云盘配置 → 搜索全量频道
-      _loadDefaultChannels(function (defaults) { _applyOverrides(defaults, callback); });
+      callback([], {}, "请先在网盘设置中登录至少一个网盘账号，才能搜索可播放资源");
       return;
     }
-    _loadChannelsForTypes(types, function (defaults) { _applyOverrides(defaults, callback); });
+    var allowedCloudTypes = {};
+    for (var j = 0; j < types.length; j++) allowedCloudTypes[types[j]] = true;
+    _loadChannelsForTypes(types, function (defaults) {
+      _applyOverrides(defaults, function (effective) {
+        callback(effective, allowedCloudTypes, "");
+      });
+    });
   }, function (err) {
     // listAvailableClouds 不支持或失败 → 降级为全量频道
     _log("Search.resolve.listCloudsError", { err: err });
-    _loadDefaultChannels(function (defaults) { _applyOverrides(defaults, callback); });
+    _loadDefaultChannels(function (defaults) {
+      _applyOverrides(defaults, function (effective) {
+        callback(effective, null, "");
+      });
+    });
   });
 }
 
 function Search(inputURL, key) {
   _log("Search.start", { inputURL: inputURL, key: key });
 
-  _resolveEffectiveChannels(function (channels) {
+  _resolveEffectiveChannels(function (channels, allowedCloudTypes, emptyMessage) {
     if (!channels || channels.length === 0) {
-      $next.emptyView("没有可用搜索频道（默认列表为空，且没有自定义频道）");
+      $next.emptyView(emptyMessage || "没有可用搜索频道（默认列表为空，且没有自定义频道）");
       return;
     }
     var keyword = _extractKeyword(inputURL);
@@ -348,25 +363,78 @@ function Search(inputURL, key) {
       return;
     }
 
+    channels = _prepareSearchChannels(channels);
+
     var done = 0;
+    var emitted = false;
     var collected = [];
     var total = channels.length;
 
-    var tryEmit = function () {
-      done++;
-      if (done < total) return;
+    var emitCollected = function () {
+      if (emitted) return;
+      emitted = true;
       var dedup = _dedupeByCloudURL(collected);
       _validateAndEmit(dedup, key, keyword);
     };
 
+    var tryEmit = function (items) {
+      if (emitted) return;
+      for (var j = 0; j < items.length; j++) collected.push(items[j]);
+      done++;
+      var minCompleted = Math.min(SEARCH_MIN_COMPLETED_CHANNELS, total);
+      var rankableCount = _filterRankableMedias(collected, String(keyword || "").toLowerCase()).length;
+      if (done >= minCompleted && rankableCount >= SEARCH_RESULT_LIMIT) {
+        _log("Search.earlyEmit", { done: done, total: total, collected: collected.length, rankable: rankableCount });
+        emitCollected();
+        return;
+      }
+      if (done >= total) emitCollected();
+    };
+
     for (var i = 0; i < channels.length; i++) {
       var ch = channels[i];
-      _fetchChannel(ch, keyword, function (items) {
-        for (var j = 0; j < items.length; j++) collected.push(items[j]);
-        tryEmit();
+      _fetchChannel(ch, keyword, allowedCloudTypes, function (items) {
+        tryEmit(items || []);
       });
     }
   });
+}
+
+function _prepareSearchChannels(channels) {
+  if (!channels || channels.length === 0) return [];
+  var decorated = [];
+  for (var i = 0; i < channels.length; i++) {
+    var ch = channels[i] || {};
+    var id = _normalizeChannelId(ch.channelId || ch.id || "");
+    var isCustom = ch.source && ch.source !== "telegram" ? 1 : 0;
+    decorated.push({
+      channel: ch,
+      idx: i,
+      custom: isCustom,
+      priority: _channelSearchPriority(id)
+    });
+  }
+  decorated.sort(function (a, b) {
+    if (b.custom !== a.custom) return b.custom - a.custom;
+    if (b.priority !== a.priority) return b.priority - a.priority;
+    return a.idx - b.idx;
+  });
+  var limited = [];
+  var max = Math.min(SEARCH_CHANNEL_LIMIT, decorated.length);
+  for (var j = 0; j < max; j++) limited.push(decorated[j].channel);
+  _log("Search.channels.selected", {
+    total: channels.length,
+    selected: limited.length,
+    ids: limited.map(function (c) { return _normalizeChannelId(c.channelId || c.id || ""); })
+  });
+  return limited;
+}
+
+function _channelSearchPriority(channelId) {
+  if (!channelId) return 0;
+  var direct = RANK_SOURCE_WEIGHTS[channelId];
+  if (direct !== undefined) return direct;
+  return 0;
 }
 
 function _extractKeyword(inputURL) {
@@ -386,7 +454,7 @@ function _normalizeChannelId(raw) {
   return id;
 }
 
-function _fetchChannel(channel, keyword, onComplete) {
+function _fetchChannel(channel, keyword, allowedCloudTypes, onComplete) {
   var channelId = _normalizeChannelId(channel.channelId);
   if (!channelId) {
     _log("Search.channel.emptyId", { raw: channel.channelId });
@@ -412,7 +480,7 @@ function _fetchChannel(channel, keyword, onComplete) {
       return;
     }
     var msgs = parseTGPage(res.body || "");
-    var medias = _messagesToMedias(msgs, channel);
+    var medias = _messagesToMedias(msgs, channel, allowedCloudTypes);
     _log("Search.channel.done", {
       channel: channelId,
       status: res.statusCode,
@@ -427,7 +495,7 @@ function _fetchChannel(channel, keyword, onComplete) {
   });
 }
 
-function _messagesToMedias(messages, channel) {
+function _messagesToMedias(messages, channel, allowedCloudTypes) {
   var out = [];
   for (var i = 0; i < messages.length; i++) {
     var msg = messages[i];
@@ -438,10 +506,17 @@ function _messagesToMedias(messages, channel) {
     var passcode = extractPasscode(msg.text) || "";
     for (var k = 0; k < links.length; k++) {
       var link = links[k];
+      if (!_isCloudTypeAllowedForSearch(link.type, allowedCloudTypes)) continue;
       out.push(_buildMedia(msg, link, passcode, channel));
     }
   }
   return out;
+}
+
+function _isCloudTypeAllowedForSearch(type, allowedCloudTypes) {
+  // null means the host could not report credentials; keep legacy behavior.
+  if (!allowedCloudTypes) return true;
+  return allowedCloudTypes[String(type || "")] === true;
 }
 
 function _buildMedia(msg, link, passcode, channel) {
@@ -863,7 +938,7 @@ function Episodes(inputURL, _key) {
     var eps = [];
     for (var i = 0; i < sorted.length; i++) {
       var f = sorted[i];
-      var displayTitle = _prettyEpisodeTitle(f.name, i + 1);
+      var displayTitle = _prettyEpisodeTitle(f.name, i + 1, sorted.length);
       var perEpisodeTitle = (info.title || "") + " · " + displayTitle;
       var playURL = "clouddrive://play?type=" + encodeURIComponent(info.type) +
                     "&shareUrl=" + encodeURIComponent(info.url) +
@@ -885,13 +960,33 @@ function Episodes(inputURL, _key) {
   });
 }
 
-function _prettyEpisodeTitle(name, fallbackIndex) {
-  if (!name) return "第 " + fallbackIndex + " 集";
-  var trimmed = String(name).replace(/\.[A-Za-z0-9]{2,5}$/, "");
-  var m = trimmed.match(/S(\d{1,2})E(\d{1,3})/i);
-  if (m) return "S" + m[1].padStart(2, "0") + "E" + m[2].padStart(2, "0");
-  var n = trimmed.match(/(\d{1,3})/);
-  if (n) return "第 " + parseInt(n[1], 10) + " 集";
+function _prettyEpisodeTitle(name, fallbackIndex, totalCount) {
+  if (!name) return totalCount === 1 ? "正片" : "第 " + fallbackIndex + " 集";
+  var trimmed = String(name)
+    .replace(/\.[A-Za-z0-9]{2,5}$/, "")
+    .replace(/[_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!trimmed) return totalCount === 1 ? "正片" : "第 " + fallbackIndex + " 集";
+
+  var seasonEpisode = trimmed.match(/S\s*(\d{1,2})\s*E\s*(\d{1,3})/i);
+  if (seasonEpisode) {
+    return "S" + seasonEpisode[1].padStart(2, "0") + "E" + seasonEpisode[2].padStart(2, "0");
+  }
+
+  var chineseEpisode = trimmed.match(/第\s*0*(\d{1,3})\s*[集话話]/);
+  if (chineseEpisode) return "第" + parseInt(chineseEpisode[1], 10) + "集";
+
+  var epMarker = trimmed.match(/(?:^|[\s.\-_\[\(])(?:EP|E)\s*0*(\d{1,3})(?:\b|[\s.\-_\]\)])/i);
+  if (epMarker) return "第" + parseInt(epMarker[1], 10) + "集";
+
+  var numericPrefix = trimmed.match(/^(?:\[\s*0*(\d{1,3})\s*\]|0*(\d{1,3})(?=[\s.\-_]))/);
+  if (numericPrefix) {
+    var prefixNumber = parseInt(numericPrefix[1] || numericPrefix[2], 10);
+    if (prefixNumber > 0) return "第" + prefixNumber + "集";
+  }
+
+  if (totalCount === 1) return "正片";
   return trimmed;
 }
 

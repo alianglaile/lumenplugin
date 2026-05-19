@@ -126,9 +126,11 @@ function runQuery(context, channels, query) {
   return chain.then(function (items) {
     var deduped = context._dedupeByCloudURL(items);
     var rankable = context._filterRankableMedias(deduped, query.toLowerCase());
-    var ranked = context._limitSearchResults(context._rankMedias(rankable, query.toLowerCase()));
+    var rankedAll = context._rankMedias(rankable, query.toLowerCase());
+    var diversified = context._dedupeNearDuplicateResults(rankedAll, query.toLowerCase());
+    var ranked = context._limitSearchResults(diversified);
     var nowSec = Math.floor(Date.now() / 1000);
-    return { raw: items.length, deduped: deduped.length, rankable: rankable.length, ranked: ranked, nowSec: nowSec };
+    return { raw: items.length, deduped: deduped.length, rankable: rankable.length, duplicates: rankedAll.length - diversified.length, ranked: ranked, nowSec: nowSec };
   });
 }
 
@@ -138,7 +140,7 @@ function compactTitle(s) {
 
 function printQueryResult(context, query, result) {
   console.log("\n=== " + query + " ===");
-  console.log("raw=" + result.raw + " deduped=" + result.deduped + " rankable=" + result.rankable + " ranked=" + result.ranked.length);
+  console.log("raw=" + result.raw + " deduped=" + result.deduped + " rankable=" + result.rankable + " nearDupes=" + result.duplicates + " ranked=" + result.ranked.length);
   var limit = Math.min(topN, result.ranked.length);
   for (var i = 0; i < limit; i++) {
     var media = result.ranked[i];

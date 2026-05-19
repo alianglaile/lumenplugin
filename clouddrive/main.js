@@ -483,8 +483,8 @@ function _extractEpisodeHint(title) {
     else if (m[3])     count = parseInt(m[3], 10);
     if (count > 0) return "共" + count + "集";
   }
-  var m2 = t.match(/(?:更新至|已?更至|最新).{0,4}第\s*(\d+)\s*集/);
-  if (m2) return "更新至第" + m2[1] + "集";
+  var updateNo = _extractUpdateEpisodeNumber(t);
+  if (updateNo > 0) return "更新至第" + updateNo + "集";
   return "";
 }
 
@@ -528,14 +528,17 @@ function _validateAndEmit(medias, key, keyword) {
   }
   var kw = String(keyword || "").toLowerCase();
   var rankable = _filterRankableMedias(medias, kw);
-  var ranked = _limitSearchResults(_rankMedias(rankable, kw));
+  var ranked = _rankMedias(rankable, kw);
+  var diversified = _dedupeNearDuplicateResults(ranked, kw);
+  var limited = _limitSearchResults(diversified);
   _log("Search.emit", {
-    count: ranked.length,
+    count: limited.length,
     droppedWeak: medias.length - rankable.length,
+    droppedDupes: ranked.length - diversified.length,
     totalIn: medias.length,
     validation: "skipped_for_fast_search"
   });
-  $next.toSearchMedias(JSON.stringify(ranked), String(key || ""));
+  $next.toSearchMedias(JSON.stringify(limited), String(key || ""));
 }
 
 // ============================================================
@@ -566,8 +569,10 @@ function _rankMedias(medias, keywordLower) {
   decorated.sort(function (a, b) {
     if (b.score.total !== a.score.total) return b.score.total - a.score.total;
     if (b.score.keyword !== a.score.keyword) return b.score.keyword - a.score.keyword;
-    if (b.score.source !== a.score.source) return b.score.source - a.score.source;
+    if (b.score.resource !== a.score.resource) return b.score.resource - a.score.resource;
     if (b.score.time !== a.score.time) return b.score.time - a.score.time;
+    if (b.score.source !== a.score.source) return b.score.source - a.score.source;
+    if (b.score.quality !== a.score.quality) return b.score.quality - a.score.quality;
     return a.originalIdx - b.originalIdx;
   });
   var out = [];
@@ -582,6 +587,39 @@ function _scoreMedia(media, keywordLower, nowSec) {
 function _limitSearchResults(medias) {
   if (!medias || medias.length <= SEARCH_RESULT_LIMIT) return medias || [];
   return medias.slice(0, SEARCH_RESULT_LIMIT);
+}
+
+function _dedupeNearDuplicateResults(medias, keywordLower) {
+  if (!medias || medias.length === 0) return [];
+  var seen = {};
+  var out = [];
+  for (var i = 0; i < medias.length; i++) {
+    var media = medias[i];
+    var key = _resultDiversityKey(media, keywordLower);
+    if (key && seen[key]) continue;
+    if (key) seen[key] = true;
+    out.push(media);
+  }
+  return out;
+}
+
+function _resultDiversityKey(media, keywordLower) {
+  var title = _stripShareNoise(media && media.title || "");
+  var compact = _compactSearchText(title);
+  if (compact.length < 6) return "";
+  return compact;
+}
+
+function _stripShareNoise(text) {
+  var cleaned = String(text || "")
+    .replace(/https?:\/\/\S+/ig, " ")
+    .replace(/提取码\s*[:：]?\s*[A-Za-z0-9]{2,12}/g, " ");
+  for (var i = 0; i < 2; i++) {
+    cleaned = cleaned
+      .replace(/^[\s🗄📁📂🎬🎞️]+/g, "")
+      .replace(/^\s*(?:名称|资源|分享|文件)\s*[:：]\s*/i, "");
+  }
+  return cleaned;
 }
 
 function _filterRankableMedias(medias, keywordLower) {
@@ -752,6 +790,9 @@ function _resourceCompletenessScore(titleLower) {
     return 10;
   }
 
+  var updateNo = _extractUpdateEpisodeNumber(titleLower);
+  if (updateNo > 0) return Math.min(145, 60 + updateNo * 5);
+
   // 正在更新中（连载）
   if (/最新|已更新|更新至|已?更至|连载/.test(titleLower)) return 70;
 
@@ -759,6 +800,15 @@ function _resourceCompletenessScore(titleLower) {
   if (/第\s*\d+\s*集/.test(titleLower)) return -45;
 
   return 0;
+}
+
+function _extractUpdateEpisodeNumber(titleLower) {
+  var t = String(titleLower || "").toLowerCase();
+  var m = t.match(/(?:已?更新至|已?更至|更至|最新|连载至)\s*(?:ep|e|第)?\s*0*(\d+)\s*(?:集|话|期)?/);
+  if (!m) m = t.match(/(?:ep|e)\s*0*(\d+)(?!\d)/);
+  if (!m) return 0;
+  var n = parseInt(m[1], 10);
+  return isNaN(n) ? 0 : n;
 }
 
 function _qualityScore(titleLower) {
